@@ -58,7 +58,8 @@ class TestValidateTarget:
         assert validate_target("10.0.0.0/16", policy) == IPv4Network("10.0.0.0/16")
 
     def test_single_host(self, policy: SafetyPolicy) -> None:
-        assert validate_target("127.0.0.1/32", policy, override_deny=True) == IPv4Network("127.0.0.1/32")
+        result = validate_target("127.0.0.1/32", policy, override_deny=True)
+        assert result == IPv4Network("127.0.0.1/32")
 
     def test_malformed_cidr_raises(self, policy: SafetyPolicy) -> None:
         with pytest.raises(SafetyError, match="parse"):

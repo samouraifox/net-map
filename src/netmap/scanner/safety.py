@@ -73,7 +73,8 @@ def validate_target(
 
     if net.num_addresses > policy.max_target_hosts:
         raise SafetyError(
-            f"{net} has {net.num_addresses} addresses; exceeds max_target_hosts={policy.max_target_hosts}"
+            f"{net} has {net.num_addresses} addresses; "
+            f"exceeds max_target_hosts={policy.max_target_hosts}"
         )
 
     if hop_distance > policy.max_hop_distance:
