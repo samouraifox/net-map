@@ -11,6 +11,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 
+from netmap.models import Event, Scan, Subnet
 from netmap.server.schemas import HostDetail, HostIp, HostSummary
 
 api = APIRouter(prefix="/api/v1")
@@ -63,6 +64,38 @@ def get_host(request: Request, host_id: int):
         host=host, open_ports=open_ports, ip_history=ip_history,
         edges=edges, recent_events=recent_events,
     )
+
+
+@api.get("/subnets", response_model=list[Subnet])
+def get_subnets(request: Request):
+    return _state(request).db.list_subnets()
+
+
+@api.get("/scans", response_model=list[Scan])
+def get_scans(
+    request: Request,
+    status: str | None = Query(default=None),
+    since: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    since_dt = datetime.fromisoformat(since) if since else None
+    return _state(request).db.list_scans(status=status, since=since_dt, limit=limit)
+
+
+@api.get("/events", response_model=list[Event])
+def get_events(
+    request: Request,
+    since: str | None = Query(default=None),
+    host_id: int | None = Query(default=None),
+    kind: str | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=2000),
+):
+    db = _state(request).db
+    since_dt = datetime.fromisoformat(since) if since else None
+    events = db.list_events(since=since_dt, host_id=host_id, limit=limit)
+    if kind:
+        events = [e for e in events if e.kind == kind]
+    return events
 
 
 def register(app: FastAPI) -> None:
