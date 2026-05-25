@@ -1,14 +1,23 @@
+from datetime import datetime, timezone
+
 import pytest
 from pydantic import ValidationError
 
 from netmap.models import (
     DeviceTypeFact,
+    Edge,
     EdgeFact,
+    Event,
+    Host,
     HostKey,
     HostnameFact,
+    HostSnapshot,
     MacFact,
     OsFact,
+    Port,
     PortFact,
+    Scan,
+    Subnet,
 )
 
 
@@ -112,19 +121,6 @@ class TestFactConfig:
         with pytest.raises(ValidationError):
             MacFact(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5",
                     src="active.arp", surprise="not-allowed")  # type: ignore[call-arg]
-
-
-from datetime import datetime, timezone
-
-from netmap.models import (
-    Edge,
-    Event,
-    Host,
-    HostSnapshot,
-    Port,
-    Scan,
-    Subnet,
-)
 
 
 def _now() -> datetime:
