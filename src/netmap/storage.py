@@ -328,7 +328,7 @@ class Storage:
             ).fetchone()
             if not cidr_row:
                 return []
-            from ipaddress import IPv4Address, IPv4Network
+            from ipaddress import IPv4Network
             net = IPv4Network(cidr_row[0])
             result = [
                 r for r in result
