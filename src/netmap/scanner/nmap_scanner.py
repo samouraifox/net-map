@@ -5,7 +5,11 @@ files. The subprocess wrapper is added in T16.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
+import asyncio
+import shutil
+from collections.abc import AsyncIterator, Iterable
+from ipaddress import IPv4Network
+from typing import ClassVar
 from xml.etree import ElementTree as ET
 
 from netmap.models import (
@@ -17,6 +21,7 @@ from netmap.models import (
     OsFact,
     PortFact,
 )
+from netmap.scanner.base import ScanMode
 
 
 def parse_nmap_xml(xml_text: str) -> Iterable[Fact]:
@@ -92,3 +97,46 @@ def _compose_version(svc_el) -> str | None:
     parts = [svc_el.get("product"), svc_el.get("version")]
     parts = [p for p in parts if p]
     return " ".join(parts) if parts else None
+
+
+def _flags_for_mode(mode: ScanMode) -> list[str]:
+    if mode == ScanMode.DISCOVER:
+        return ["-sn", "-PR", "-PE", "-PA80,443", "-T4"]
+    if mode == ScanMode.DEFAULT:
+        return [
+            "-sS", "-O", "--top-ports", "100", "-T4",
+            "--host-timeout", "5m", "--max-retries", "2",
+        ]
+    if mode == ScanMode.DEEP:
+        return [
+            "-sS", "-sV", "-O", "-p-", "-T3",
+            "--host-timeout", "30m", "--max-retries", "2",
+        ]
+    raise ValueError(f"unknown ScanMode: {mode!r}")
+
+
+class NmapScanner:
+    """Subprocess-backed active scanner. Implements ``ActiveScanner``."""
+
+    name: ClassVar[str] = "active.nmap"
+
+    def __init__(self, binary: str | None = None) -> None:
+        self._binary = binary or shutil.which("nmap") or "nmap"
+
+    async def scan(
+        self, target: IPv4Network, mode: ScanMode
+    ) -> AsyncIterator[Fact]:
+        flags = _flags_for_mode(mode)
+        args = [self._binary, "-oX", "-", *flags, str(target)]
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"nmap exited {proc.returncode}: {stderr.decode().strip()}"
+            )
+        for fact in parse_nmap_xml(stdout.decode()):
+            yield fact
