@@ -191,4 +191,22 @@ async def stream(request: Request):
 
 
 def register(app: FastAPI) -> None:
+    from importlib.resources import files
+
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
     app.include_router(api)
+
+    ui_dir = files("netmap").joinpath("ui")
+    index_path = str(ui_dir.joinpath("index.html"))
+
+    app.mount(
+        "/ui",
+        StaticFiles(directory=str(ui_dir)),
+        name="ui",
+    )
+
+    @app.get("/", include_in_schema=False)
+    def index():
+        return FileResponse(index_path, media_type="text/html")
