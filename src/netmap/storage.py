@@ -19,6 +19,15 @@ from netmap.models import Edge, Event, Host, HostSnapshot, Port, Scan, Subnet
 def _iso(dt: datetime) -> str:
     return dt.isoformat()
 
+
+def _ip_in_net_safe(ip: str, net) -> bool:
+    from ipaddress import AddressValueError, IPv4Address
+    try:
+        return IPv4Address(ip) in net
+    except (AddressValueError, ValueError):
+        return False
+
+
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS host (
   id          INTEGER PRIMARY KEY,
@@ -269,6 +278,63 @@ class Storage:
             "ON CONFLICT(host_id, ip) DO UPDATE SET last_seen=excluded.last_seen",
             (host_id, ip, _iso(first_seen), _iso(last_seen)),
         )
+
+    def list_host_summaries(
+        self,
+        *,
+        subnet_id: int | None = None,
+        q: str | None = None,
+    ) -> list[dict]:
+        """Return a list of dicts shaped for the GET /hosts API.
+
+        Columns: id, mac, primary_ip, hostname, vendor, device_type, trusted,
+        open_port_count, last_seen. The subnet filter matches the host's
+        primary_ip against the subnet CIDR via SQLite-side check. The q filter
+        is a case-insensitive substring against mac, primary_ip, hostname, vendor.
+        """
+        sql = (
+            "SELECT h.id, h.mac, h.primary_ip, h.hostname, h.vendor, "
+            "h.device_type, h.trusted, h.last_seen, "
+            "COALESCE(SUM(CASE WHEN p.state='open' THEN 1 ELSE 0 END), 0) "
+            "FROM host h LEFT JOIN port p ON p.host_id = h.id "
+            "WHERE 1=1"
+        )
+        params: list[object] = []
+        if q:
+            sql += (
+                " AND (lower(COALESCE(h.mac,''))      LIKE ?"
+                "   OR lower(h.primary_ip)            LIKE ?"
+                "   OR lower(COALESCE(h.hostname,'')) LIKE ?"
+                "   OR lower(COALESCE(h.vendor,''))   LIKE ?)"
+            )
+            pattern = f"%{q.lower()}%"
+            params.extend([pattern, pattern, pattern, pattern])
+        sql += " GROUP BY h.id ORDER BY h.id"
+
+        rows = self._conn.execute(sql, params).fetchall()
+
+        result: list[dict] = []
+        for r in rows:
+            result.append({
+                "id": r[0], "mac": r[1], "primary_ip": r[2],
+                "hostname": r[3], "vendor": r[4], "device_type": r[5],
+                "trusted": bool(r[6]), "last_seen": r[7],
+                "open_port_count": int(r[8]),
+            })
+
+        if subnet_id is not None:
+            cidr_row = self._conn.execute(
+                "SELECT cidr FROM subnet WHERE id=?", (subnet_id,)
+            ).fetchone()
+            if not cidr_row:
+                return []
+            from ipaddress import IPv4Address, IPv4Network
+            net = IPv4Network(cidr_row[0])
+            result = [
+                r for r in result
+                if _ip_in_net_safe(r["primary_ip"], net)
+            ]
+        return result
 
     def list_host_ips(self, host_id: int) -> list[dict]:
         rows = self._conn.execute(
