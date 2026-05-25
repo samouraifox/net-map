@@ -1,1 +1,125 @@
-<!doctype html><html><head><meta charset="utf-8"><title>net-map</title></head><body><div id="root">net-map UI loading…</div></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>net-map</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+  <script src="https://unpkg.com/cytoscape@3.30.0/dist/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/layout-base@2.0.1/layout-base.js"></script>
+  <script src="https://unpkg.com/cose-base@2.2.0/cose-base.js"></script>
+  <script src="https://unpkg.com/cytoscape-cose-bilkent@4.1.0/cytoscape-cose-bilkent.js"></script>
+</head>
+<body>
+  <!-- Device-type icon sprite. Referenced via <use href="#ic-router"/> etc. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="ic-router" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="13" width="18" height="6" rx="1" />
+        <path d="M7 17h.01M11 17h.01" />
+        <path d="M12 13V7" />
+        <path d="M8 7l4-4 4 4" />
+      </symbol>
+      <symbol id="ic-server" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="6" rx="1" />
+        <rect x="3" y="14" width="18" height="6" rx="1" />
+        <path d="M7 7h.01M7 17h.01" />
+      </symbol>
+      <symbol id="ic-nas" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="16" rx="1" />
+        <circle cx="8" cy="8" r="1" />
+        <circle cx="8" cy="12" r="1" />
+        <circle cx="8" cy="16" r="1" />
+      </symbol>
+      <symbol id="ic-laptop" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="5" width="16" height="11" rx="1" />
+        <path d="M2 19h20" />
+      </symbol>
+      <symbol id="ic-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="7" y="2" width="10" height="20" rx="2" />
+        <path d="M11 18h2" />
+      </symbol>
+      <symbol id="ic-printer" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 9V3h12v6" />
+        <rect x="3" y="9" width="18" height="8" rx="1" />
+        <rect x="6" y="14" width="12" height="7" />
+      </symbol>
+      <symbol id="ic-ap" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12.55a11 11 0 0 1 14 0" />
+        <path d="M8.5 16.5a6 6 0 0 1 7 0" />
+        <path d="M2 8.82a15 15 0 0 1 20 0" />
+        <circle cx="12" cy="20" r="1" />
+      </symbol>
+      <symbol id="ic-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8" />
+        <circle cx="12" cy="13" r="3" />
+        <path d="M4 8l4-4h4" />
+      </symbol>
+      <symbol id="ic-iot" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="5" width="14" height="14" rx="1" />
+        <path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4" />
+      </symbol>
+      <symbol id="ic-unknown" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+              stroke-dasharray="2 2">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4" />
+        <path d="M12 17h.01" />
+      </symbol>
+    </defs>
+  </svg>
+
+  <div id="app">
+    <header class="topbar">
+      <div class="brand"><span class="cursor">▌</span>net-map</div>
+      <div class="crumb" id="crumb">~/networks # discover · waiting</div>
+      <div class="kpis" id="kpis"></div>
+      <button class="scan-now" id="scanNowBtn" type="button">scan now</button>
+      <div class="live" id="liveIndicator" aria-live="polite">live</div>
+    </header>
+
+    <aside class="sidebar">
+      <h2 class="sidebar-h">subnets</h2>
+      <ul class="subnet-list" id="subnetList"></ul>
+      <p class="sidebar-m3-note">[M3] discover via gw</p>
+    </aside>
+
+    <main class="canvas">
+      <div id="cy"></div>
+      <div class="canvas-empty" id="canvasEmpty">
+        <p>waiting for first scan…</p>
+      </div>
+    </main>
+
+    <section class="detail" id="detail" aria-label="host detail">
+      <div class="detail-empty" id="detailEmpty">select a host on the graph to inspect it</div>
+      <div class="detail-body" id="detailBody" hidden></div>
+    </section>
+
+    <section class="timeline" aria-label="event timeline">
+      <h2 class="timeline-h">events</h2>
+      <ol class="timeline-list" id="timelineList"></ol>
+    </section>
+
+    <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+  </div>
+
+  <!-- Accessibility mirror: hidden table of hosts for screen readers. -->
+  <table id="srHostTable" class="sr-only" aria-label="hosts (text view)"></table>
+
+  <script src="/ui/app.js" defer></script>
+</body>
+</html>
