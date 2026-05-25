@@ -104,6 +104,15 @@ def run(
         )
         return
 
+    pol = policy or SafetyPolicy()
+    try:
+        validate_target(detected, pol, override_deny=False)
+    except SafetyError as exc:
+        logger.warning(
+            "auto-detected CIDR %s rejected by safety policy: %s", detected, exc
+        )
+        return
+
     db.insert_subnet(Subnet(
         cidr=detected, source="config", enabled=True,
         hop_distance=0, first_seen=now,

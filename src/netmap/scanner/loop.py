@@ -22,6 +22,7 @@ from netmap.models import Event, Fact, Scan
 from netmap.scanner.arp_scanner import ArpScanner
 from netmap.scanner.base import ActiveScanner, ScanMode
 from netmap.scanner.nmap_scanner import NmapScanner
+from netmap.scanner.safety import SafetyError, SafetyPolicy, validate_target
 from netmap.server.events import AsyncBus
 from netmap.storage import Storage
 
@@ -160,15 +161,34 @@ async def scan_loop(
 ) -> None:
     """Tick `discover` every `cfg.scan.interval_s` and `default` every
     `cfg.scan.default_scan_interval_s`. Exits when `stop` is set."""
+    policy = SafetyPolicy(
+        deny_cidrs=tuple(cfg.safety.deny_cidrs),
+        allow_public_scan=cfg.safety.allow_public_scan,
+        max_target_hosts=cfg.safety.max_target_hosts,
+        max_hop_distance=cfg.safety.max_hop_distance,
+    )
     last_default = 0.0
     while not stop.is_set():
         subnets = [s for s in db.list_subnets() if s.enabled]
-        targets: list[IPv4Network] = []
+        raw_targets: list[IPv4Network] = []
         for s in subnets:
             try:
-                targets.append(IPv4Network(s.cidr))
+                raw_targets.append(IPv4Network(s.cidr))
             except (ValueError, TypeError):
                 logger.warning("skipping unparseable subnet cidr: %s", s.cidr)
+
+        targets: list[IPv4Network] = []
+        now = datetime.now(tz=UTC)
+        for t in raw_targets:
+            try:
+                validate_target(str(t), policy, override_deny=False)
+                targets.append(t)
+            except SafetyError as exc:
+                logger.warning("scan_loop: skipping rejected target %s: %s", t, exc)
+                await bus.publish(Event(
+                    ts=now, scan_id=None, kind="scan.error",
+                    payload={"error": str(exc), "mode": "discover", "target": str(t)},
+                ))
 
         if targets:
             await maybe_run(

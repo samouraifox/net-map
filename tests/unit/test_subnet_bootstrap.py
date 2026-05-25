@@ -122,3 +122,17 @@ def test_run_logs_warning_when_detection_fails(monkeypatch, caplog):
 
     assert db.list_subnets() == []
     assert any("auto-detect failed" in rec.message for rec in caplog.records)
+
+
+def test_run_rejects_invalid_auto_detected_cidr(monkeypatch, caplog):
+    """If ip route returns a CIDR inside deny_cidrs, the bootstrap drops it."""
+    db = Storage(":memory:")
+    monkeypatch.setattr(
+        subnet_bootstrap, "_detect_local_cidr", lambda: "169.254.0.0/16",
+    )
+
+    with caplog.at_level("WARNING", logger="netmap.bootstrap"):
+        subnet_bootstrap.run(db, override=None)
+
+    assert db.list_subnets() == []
+    assert any("rejected by safety policy" in rec.message for rec in caplog.records)

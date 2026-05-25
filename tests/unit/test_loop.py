@@ -204,3 +204,44 @@ async def test_scan_loop_exits_promptly_on_stop():
     await asyncio.wait_for(task, timeout=2)
     # task should return without exception
     assert task.done() and task.exception() is None
+
+
+@pytest.mark.asyncio
+async def test_scan_loop_skips_invalid_cidrs_and_publishes_scan_error(monkeypatch):
+    db = Storage(":memory:")
+    # Insert a CIDR that violates the default deny list (169.254.0.0/16 link-local)
+    db.insert_subnet(Subnet(
+        cidr="169.254.0.0/16", source="discovered", enabled=True,
+        hop_distance=0, first_seen=datetime.now(tz=UTC),
+    ))
+    db.insert_subnet(Subnet(
+        cidr="192.168.1.0/24", source="config", enabled=True,
+        hop_distance=0, first_seen=datetime.now(tz=UTC),
+    ))
+    bus = AsyncBus()
+    in_flight: set[tuple[str, str]] = set()
+    stop = asyncio.Event()
+    cfg = Config(scan=ScanCfg(interval_s=1, default_scan_interval_s=99_999))
+
+    dispatched: list[list[str]] = []
+    async def fake_maybe_run(*, mode, targets, **_):
+        dispatched.append([str(t) for t in targets])
+        return 1
+    monkeypatch.setattr("netmap.scanner.loop.maybe_run", fake_maybe_run)
+
+    sub = bus.subscribe()
+    task = asyncio.create_task(scan_loop(db, bus, stop, cfg, in_flight))
+    await asyncio.sleep(0.2)
+    stop.set()
+    await asyncio.wait_for(task, timeout=2)
+
+    # Only the valid CIDR was dispatched to maybe_run.
+    assert dispatched, "maybe_run was not called"
+    assert all("192.168.1.0/24" in t and "169.254" not in str(t) for t in dispatched[0])
+
+    # A scan.error was published for the rejected CIDR.
+    kinds = []
+    while not sub.empty():
+        ev = sub.get_nowait()
+        kinds.append(ev.kind)
+    assert "scan.error" in kinds
