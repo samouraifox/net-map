@@ -430,8 +430,121 @@ function selectHost(id) {
   }).catch((exc) => toast("could not load host: " + exc.message));
 }
 
-// -------------------- section 3: SSE + reducer (Task 25) --------------------
-function connectSse() {}
+// -------------------- section 3: SSE + reducer --------------------
+
+function connectSse() {
+  if (State.sse) {
+    try { State.sse.close(); } catch (_) {}
+  }
+  const sse = new EventSource("/api/v1/stream");
+  State.sse = sse;
+
+  sse.onopen = async () => {
+    State.sseBackoffMs = 1000;
+    renderTopbar();
+    // Catch up: refetch hosts + missed events.
+    try {
+      const hosts = await api.hosts();
+      State.hosts.clear();
+      for (const h of hosts) State.hosts.set(h.id, h);
+      if (State.lastEventTs) {
+        const missed = await api.events({ since: State.lastEventTs, limit: 200 });
+        for (const ev of missed.reverse()) reduceEvent(ev, { backfill: true });
+      }
+      renderGraph(); renderTopbar();
+    } catch (exc) {
+      toast("catch-up failed: " + exc.message);
+    }
+  };
+
+  sse.onmessage = (msg) => {
+    if (!msg.data) return;
+    let ev;
+    try { ev = JSON.parse(msg.data); }
+    catch (_) { return; }
+    State.lastEventTs = ev.ts;
+    reduceEvent(ev, { backfill: false });
+  };
+
+  sse.onerror = () => {
+    sse.close();
+    State.sse = null;
+    renderTopbar();
+    const backoff = State.sseBackoffMs;
+    State.sseBackoffMs = Math.min(backoff * 2, 30000);
+    setTimeout(connectSse, backoff);
+  };
+}
+
+function reduceEvent(ev, { backfill = false } = {}) {
+  switch (ev.kind) {
+    case "host.new": {
+      if (ev.host_id != null) {
+        api.hosts().then((hs) => {
+          State.hosts.clear();
+          for (const h of hs) State.hosts.set(h.id, h);
+          renderGraph(); renderTopbar();
+        });
+      }
+      break;
+    }
+    case "ip.changed": {
+      if (ev.host_id != null) {
+        api.hostDetail(ev.host_id).then((d) => {
+          const summary = {
+            id: d.host.id, mac: d.host.mac, primary_ip: d.host.primary_ip,
+            hostname: d.host.hostname, vendor: d.host.vendor,
+            device_type: d.host.device_type, trusted: d.host.trusted,
+            open_port_count: d.open_ports.length, last_seen: d.host.last_seen,
+          };
+          State.hosts.set(summary.id, summary);
+          if (State.selectedHostId === summary.id) {
+            State.hostDetail = d;
+            renderHostDetail();
+          }
+          renderGraph(); renderTopbar();
+        }).catch(() => {});
+      }
+      break;
+    }
+    case "port.opened":
+    case "port.closed": {
+      if (ev.host_id != null && State.selectedHostId === ev.host_id) {
+        api.hostDetail(ev.host_id).then((d) => {
+          State.hostDetail = d; renderHostDetail(); renderTopbar();
+        }).catch(() => {});
+      }
+      // Also refresh the host's open_port_count in the summary map.
+      if (ev.host_id != null) {
+        api.hosts().then((hs) => {
+          for (const h of hs) State.hosts.set(h.id, h);
+          renderGraph();
+        }).catch(() => {});
+      }
+      break;
+    }
+    case "scan.started": {
+      State.scanning = true; renderTopbar(); break;
+    }
+    case "scan.ok": {
+      State.scanning = false; renderTopbar(); break;
+    }
+    case "scan.error": {
+      State.scanning = false; renderTopbar();
+      if (!backfill) toast(`scan failed: ${ev.payload?.error || "unknown error"}`);
+      break;
+    }
+    case "scan.skipped": {
+      // No state change; just goes to the timeline.
+      break;
+    }
+    default: {
+      // Unknown kind — best-effort append to timeline only.
+      break;
+    }
+  }
+  appendEvent(ev);
+}
 
 // -------------------- section 4: host detail + timeline (Task 26) --------------------
 function renderHostDetail() {}
