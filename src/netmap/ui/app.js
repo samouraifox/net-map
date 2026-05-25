@@ -546,6 +546,156 @@ function reduceEvent(ev, { backfill = false } = {}) {
   appendEvent(ev);
 }
 
-// -------------------- section 4: host detail + timeline (Task 26) --------------------
-function renderHostDetail() {}
-function appendEvent(_ev) {}
+// -------------------- section 4: host detail + timeline --------------------
+
+function _iconNode(name, color, size = 24) {
+  const uri = iconDataUri(name, color);
+  const img = el("img", {
+    src: uri, alt: "", width: String(size), height: String(size),
+    class: "host-icon",
+  });
+  return img;
+}
+
+function renderHostDetail() {
+  const empty = $("#detailEmpty");
+  const body = $("#detailBody");
+  if (!State.hostDetail) {
+    empty.hidden = false;
+    body.hidden = true;
+    body.replaceChildren();
+    return;
+  }
+  empty.hidden = true;
+  body.hidden = false;
+
+  const d = State.hostDetail;
+  const head = el("div", { class: "host-head" },
+    _iconNode(iconForDevice(d.host.device_type), getCss("--text"), 28),
+    el("div", { class: "host-meta" },
+      el("div", { class: "ip" }, d.host.hostname || d.host.primary_ip),
+      el("div", { class: "mac" }, d.host.mac || "no mac"),
+      el("div", { class: "vendor" }, d.host.vendor || "vendor unknown"),
+    ),
+  );
+
+  const overview = _section("overview", false, [
+    _kv("ip", d.host.primary_ip),
+    _kv("device", d.host.device_type || "unknown"),
+    _kv("os", d.host.os_detail || d.host.os_family || "—"),
+    _kv("trusted", d.host.trusted ? "yes" : "no"),
+    _kv("last seen", fmtRelative(d.host.last_seen)),
+  ]);
+
+  const portsSection = _section(
+    `open ports [${d.open_ports.length}]`,
+    false,
+    d.open_ports.length
+      ? d.open_ports.map((p) => {
+          const r = portRisk(p.protocol, p.number);
+          return el("div", { class: "port-row " + r.tier },
+            el("span", { class: "rl" }, r.label[0]),
+            el("span", {}, `${p.number}/${p.protocol}`),
+            el("span", { class: "rl" }, r.label),
+            el("span", {}, p.service ? `${p.service}${p.version ? " · " + p.version : ""}` : ""),
+          );
+        })
+      : [el("div", { class: "detail-disabled-note" }, "no open ports observed")],
+  );
+
+  const history = _section(
+    `ip history [${d.ip_history.length}]`,
+    true,
+    d.ip_history.length
+      ? d.ip_history.map((row) =>
+          el("div", { class: "ip-history-row" },
+            el("span", {}, row.ip),
+            el("span", { class: "meta" },
+              `${fmtRelative(row.first_seen)} → ${fmtRelative(row.last_seen)}`),
+          ))
+      : [el("div", { class: "detail-disabled-note" }, "single IP only")],
+  );
+
+  const events = _section(
+    `recent events [${d.recent_events.length}]`,
+    true,
+    d.recent_events.length
+      ? d.recent_events.slice(0, 25).map((ev) =>
+          el("div", { class: "event-row" },
+            el("span", { class: "ts" }, fmtTime(ev.ts)),
+            el("span", {}, ev.kind),
+            el("span", { class: "ts" }, ev.payload ? JSON.stringify(ev.payload) : ""),
+          ))
+      : [el("div", { class: "detail-disabled-note" }, "no events recorded")],
+  );
+
+  const notes = _section("notes", true, [
+    el("div", { class: "detail-disabled-note",
+                title: "trust / notes / device_type override ship in M3" },
+      "trust toggle + notes — [M3]"),
+  ]);
+
+  body.replaceChildren(head, overview, portsSection, history, events, notes);
+}
+
+function _section(title, collapsed, children) {
+  const section = el("section",
+    { class: "detail-section", dataset: { collapsed: collapsed ? "true" : "false" } });
+  const head = el("h3", { class: "section-h" }, title);
+  head.addEventListener("click", () => {
+    const next = section.dataset.collapsed === "true" ? "false" : "true";
+    section.dataset.collapsed = next;
+  });
+  section.appendChild(head);
+  section.appendChild(el("div", { class: "section-body" }, ...children));
+  return section;
+}
+
+function _kv(k, v) {
+  return el("div", { class: "event-row" },
+    el("span", { class: "ts" }, k),
+    el("span", {}, String(v)),
+  );
+}
+
+function appendEvent(ev) {
+  State.events.unshift(ev);
+  if (State.events.length > TIMELINE_CAP) State.events.length = TIMELINE_CAP;
+  renderTimeline();
+  // Mirror to the screen-reader-accessible table.
+  _renderSrTable();
+}
+
+function renderTimeline() {
+  const list = $("#timelineList");
+  if (!list) return;
+  const items = State.events.slice(0, 80).map((ev) =>
+    el("li", {},
+      el("span", { class: "ts" }, fmtTime(ev.ts)),
+      el("span", {
+        class: "kind" + (ev.kind === "scan.error" || ev.kind === "host.new" ? " risk" : "")
+      }, ev.kind),
+      el("span", { class: "detail-text" },
+        ev.payload ? JSON.stringify(ev.payload) : ""),
+    ),
+  );
+  list.replaceChildren(...items);
+}
+
+function _renderSrTable() {
+  const table = document.getElementById("srHostTable");
+  if (!table) return;
+  const rows = [el("tr", {},
+    el("th", {}, "ip"), el("th", {}, "host"),
+    el("th", {}, "ports"), el("th", {}, "last seen"),
+  )];
+  for (const h of State.hosts.values()) {
+    rows.push(el("tr", {},
+      el("td", {}, h.primary_ip),
+      el("td", {}, h.hostname || ""),
+      el("td", {}, String(h.open_port_count)),
+      el("td", {}, fmtRelative(h.last_seen)),
+    ));
+  }
+  table.replaceChildren(...rows);
+}
