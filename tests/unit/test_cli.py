@@ -92,3 +92,43 @@ class TestScanCommand:
         s = Storage(str(db_path))
         rows = s._conn.execute("SELECT primary_ip FROM host").fetchall()
         assert rows == [("192.168.1.5",)]
+
+
+class TestDbCommands:
+    def test_db_path(self, tmp_path: Path) -> None:
+        db = tmp_path / "x.db"
+        r = runner.invoke(app, ["db", "path", "--db", str(db)])
+        assert r.exit_code == 0
+        assert str(db) in r.stdout
+
+    def test_db_vacuum(self, tmp_path: Path) -> None:
+        from netmap.storage import Storage
+        db = tmp_path / "x.db"
+        Storage(str(db)).close()
+        r = runner.invoke(app, ["db", "vacuum", "--db", str(db)])
+        assert r.exit_code == 0
+
+    def test_db_reset_requires_flag(self, tmp_path: Path) -> None:
+        from netmap.storage import Storage
+        db = tmp_path / "x.db"
+        Storage(str(db)).close()
+        r = runner.invoke(app, ["db", "reset", "--db", str(db)])
+        assert r.exit_code != 0
+
+    def test_db_reset_with_flag(self, tmp_path: Path) -> None:
+        from netmap.storage import Storage
+        db = tmp_path / "x.db"
+        Storage(str(db)).close()
+        r = runner.invoke(
+            app, ["db", "reset", "--db", str(db), "--yes-really-delete"]
+        )
+        assert r.exit_code == 0
+        assert not db.exists()
+
+
+class TestConfigCommands:
+    def test_config_show(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "config.toml"
+        r = runner.invoke(app, ["config", "show", "--config", str(cfg)])
+        assert r.exit_code == 0
+        assert "interval_s" in r.stdout

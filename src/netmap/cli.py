@@ -131,3 +131,67 @@ async def _run_scan(
         f"scan {scan_id}: {len(facts)} facts → {len(events)} events; "
         f"{hosts} hosts total"
     )
+
+
+db_app = typer.Typer(help="Database utilities")
+config_app = typer.Typer(help="Configuration")
+app.add_typer(db_app, name="db")
+app.add_typer(config_app, name="config")
+
+
+@db_app.command("path")
+def db_path_cmd(
+    db: Annotated[Path, typer.Option("--db")] = DEFAULT_DB_PATH,
+) -> None:
+    """Print the resolved database path."""
+    typer.echo(str(db))
+
+
+@db_app.command("vacuum")
+def db_vacuum_cmd(
+    db: Annotated[Path, typer.Option("--db")] = DEFAULT_DB_PATH,
+) -> None:
+    """Run SQLite VACUUM."""
+    s = Storage(str(db))
+    s._conn.execute("VACUUM")
+    s.close()
+
+
+@db_app.command("reset")
+def db_reset_cmd(
+    db: Annotated[Path, typer.Option("--db")] = DEFAULT_DB_PATH,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes-really-delete",
+            help="Confirm permanent deletion of the database file.",
+        ),
+    ] = False,
+) -> None:
+    """Delete the database file. Requires --yes-really-delete."""
+    if not yes:
+        typer.echo(
+            "refusing to delete; pass --yes-really-delete to confirm",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if db.exists():
+        db.unlink()
+
+
+@db_app.command("migrate")
+def db_migrate_cmd(
+    db: Annotated[Path, typer.Option("--db")] = DEFAULT_DB_PATH,
+) -> None:
+    """Run idempotent schema bootstrap (no-op if already current)."""
+    Storage(str(db)).close()
+
+
+@config_app.command("show")
+def config_show_cmd(
+    config: Annotated[Path, typer.Option("--config")] = DEFAULT_CONFIG_PATH,
+) -> None:
+    """Print the resolved configuration as JSON."""
+    import json as _json
+    cfg = load_config(config)
+    typer.echo(_json.dumps(cfg.model_dump(), indent=2, default=str))
