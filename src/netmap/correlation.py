@@ -35,9 +35,11 @@ def correlate(
     scan_id: int,
     *,
     now: datetime | None = None,
+    observed_subnets: list[str] | None = None,
 ) -> list[Event]:
     """Merge scanner-emitted facts into host records and emit change events."""
     now = now or datetime.now(tz=UTC)
+    observed_subnets = observed_subnets or []
     events: list[Event] = []
 
     by_key: dict[HostKey, list[Fact]] = {}
@@ -57,6 +59,10 @@ def correlate(
                 ts=now, scan_id=scan_id, host_id=updated.id, kind="host.new",
                 payload={"ip": updated.primary_ip, "mac": updated.mac},
             ))
+
+        events.extend(_apply_ports(
+            db, updated, host_facts, scan_id, now, observed_subnets,
+        ))
 
     for ev in events:
         db.insert_event(ev)
@@ -110,3 +116,70 @@ def _build_host_dto(key: HostKey, facts: list[Fact], now: datetime) -> Host:
         first_seen=now,
         last_seen=now,
     )
+
+
+def _apply_ports(
+    db: Storage,
+    host: Host,
+    facts: list[Fact],
+    scan_id: int,
+    now: datetime,
+    observed_subnets: list[str],
+) -> list[Event]:
+    """Apply port facts for one host; emit port.opened / port.closed events."""
+    from netmap.models import Port
+
+    events: list[Event] = []
+    seen: set[tuple[str, int]] = set()
+
+    # Snapshot the host's currently-open ports BEFORE upserting any new ones,
+    # so port.opened detection uses the pre-scan state.
+    existing_open = {
+        (p.protocol, p.number) for p in db.list_ports(host.id, only_open=True)
+    }
+
+    for f in facts:
+        if not isinstance(f, PortFact):
+            continue
+        seen.add((f.proto, f.port))
+        db.upsert_port(Port(
+            host_id=host.id, protocol=f.proto, number=f.port, state=f.state,
+            service=f.service, version=f.version,
+            first_seen=now, last_seen=now,
+        ))
+        if (f.proto, f.port) not in existing_open and f.state == "open":
+            events.append(Event(
+                ts=now, scan_id=scan_id, host_id=host.id, kind="port.opened",
+                payload={
+                    "proto": f.proto, "port": f.port,
+                    "service": f.service, "version": f.version,
+                },
+            ))
+
+    # Closure detection requires the host's primary_ip to fall within one of
+    # the ``observed_subnets``. A discover-only scan must omit ``observed_subnets``
+    # (or pass an empty list) so it cannot emit spurious closures. A port-aware
+    # scan passes the subnets it actually probed, which both:
+    #   - gates ARP-only scans (no observed_subnets → no closures), and
+    #   - prevents a scan of subnet A from closing ports on subnet B.
+    if _host_in_observed(host, observed_subnets):
+        for p in db.list_ports(host.id, only_open=True):
+            if (p.protocol, p.number) not in seen:
+                db.close_port(host.id, p.protocol, p.number)
+                events.append(Event(
+                    ts=now, scan_id=scan_id, host_id=host.id, kind="port.closed",
+                    payload={"proto": p.protocol, "port": p.number},
+                ))
+
+    return events
+
+
+def _host_in_observed(host: Host, observed_subnets: list[str]) -> bool:
+    if not observed_subnets:
+        return False
+    from ipaddress import IPv4Address, IPv4Network
+    try:
+        ip = IPv4Address(host.primary_ip)
+    except (ValueError, TypeError):
+        return False
+    return any(ip in IPv4Network(c) for c in observed_subnets)

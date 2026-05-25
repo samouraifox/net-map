@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 
 from netmap.correlation import correlate
-from netmap.models import MacFact, Scan
+from netmap.models import HostKey, MacFact, PortFact, Scan
 from netmap.storage import Storage
 
 T0 = datetime(2026, 5, 25, 10, 0, tzinfo=UTC)
@@ -52,3 +52,55 @@ class TestNewHost:
         )
         row = db._conn.execute("SELECT vendor FROM host").fetchone()
         assert row[0] == "Synology Inc."
+
+
+class TestPortEvents:
+    def test_port_opened(self, db: Storage, scan_id: int) -> None:
+        facts = [
+            MacFact(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5", src="active.arp"),
+            PortFact(
+                host_key=HostKey(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5"),
+                proto="tcp", port=22, state="open", service="ssh",
+            ),
+        ]
+        events = correlate(facts, db, scan_id, now=T0)
+        kinds = [e.kind for e in events]
+        assert "port.opened" in kinds
+
+    def test_port_unchanged_no_event(self, db: Storage, scan_id: int) -> None:
+        facts = [
+            MacFact(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5", src="active.arp"),
+            PortFact(
+                host_key=HostKey(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5"),
+                proto="tcp", port=22, state="open", service="ssh",
+            ),
+        ]
+        correlate(facts, db, scan_id, now=T0)
+        sid2 = db.start_scan(Scan(started_at=T0, source="active.nmap", status="running"))
+        events = correlate(facts, db, sid2, now=T0)
+        assert "port.opened" not in [e.kind for e in events]
+
+    def test_port_closed(self, db: Storage, scan_id: int) -> None:
+        # First scan: port open
+        facts1 = [
+            MacFact(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5", src="active.arp"),
+            PortFact(
+                host_key=HostKey(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5"),
+                proto="tcp", port=22, state="open", service="ssh",
+            ),
+        ]
+        correlate(facts1, db, scan_id, now=T0)
+        # Second scan over the same subnet: same host but NO port fact → closure
+        sid2 = db.start_scan(Scan(
+            started_at=T0, source="active.nmap",
+            target="192.168.1.0/24", mode="default", status="running",
+        ))
+        facts2 = [
+            MacFact(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5", src="active.arp"),
+        ]
+        events = correlate(
+            facts2, db, sid2, now=T0,
+            observed_subnets=["192.168.1.0/24"],
+        )
+        kinds = [e.kind for e in events]
+        assert "port.closed" in kinds
