@@ -60,6 +60,14 @@ def scan(
             "--i-understand", help="Confirm public-IP scan"
         ),
     ] = False,
+    allow_loopback: Annotated[
+        bool,
+        typer.Option(
+            "--allow-loopback",
+            hidden=True,
+            help="Smoke-test escape hatch — overrides deny_cidrs for the supplied targets.",
+        ),
+    ] = False,
 ) -> None:
     """Run a single ad-hoc scan against ``--target`` CIDR(s)."""
     cfg = load_config(config_path)
@@ -73,7 +81,11 @@ def scan(
     nets: list[IPv4Network] = []
     for t in target:
         try:
-            nets.append(validate_target(t, policy, confirm=i_understand))
+            nets.append(
+                validate_target(
+                    t, policy, confirm=i_understand, override_deny=allow_loopback,
+                )
+            )
         except SafetyError as exc:
             typer.echo(f"refused: {exc}", err=True)
             raise typer.Exit(code=2) from exc
