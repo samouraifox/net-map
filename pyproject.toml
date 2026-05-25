@@ -1,0 +1,50 @@
+[project]
+name = "netmap"
+version = "0.1.0"
+description = "Continuous inventory + topology visualizer for local networks"
+requires-python = ">=3.13"
+authors = [{ name = "Aymen", email = "aymen09112004@gmail.com" }]
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = [
+    "typer>=0.16.0",
+    "pydantic>=2.9",
+    "scapy>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-mock>=3.14",
+    "anyio>=4.6",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+netmap = "netmap.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/netmap"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/netmap/data" = "netmap/data"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q --strict-markers"
+asyncio_mode = "auto"
+markers = [
+    "integration: tests that exercise external binaries / sockets (deselect with -m 'not integration')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
