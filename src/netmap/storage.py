@@ -204,8 +204,8 @@ class Storage:
             existing: Host | None = None
             if h.mac:
                 existing = self._find_host_by_mac(h.mac)
-                if existing is None:
-                    existing = self._find_host_by_ip(h.primary_ip)
+            if existing is None:
+                existing = self._find_host_by_ip(h.primary_ip)
 
             if existing is None:
                 cur = conn.execute(

@@ -102,6 +102,19 @@ class TestHostUpsert:
         assert with_mac.id == ip_only.id
         assert with_mac.mac == "aa:bb:cc:dd:ee:01"
 
+    def test_repeated_macless_upsert_is_one_row(self, db: Storage) -> None:
+        # Two cross-router observations of the same IP without a MAC should
+        # collapse to a single host row (spec §7.1 identity rule).
+        first = db.upsert_host(_host("10.0.0.7", mac=None))
+        second = db.upsert_host(
+            _host("10.0.0.7", mac=None).model_copy(update={"last_seen": T1})
+        )
+        assert first.id == second.id
+        rows = db._conn.execute(
+            "SELECT COUNT(*) FROM host WHERE primary_ip=?", ("10.0.0.7",)
+        ).fetchone()
+        assert rows[0] == 1
+
 
 class TestPort:
     def test_upsert_new_port(self, db: Storage) -> None:
