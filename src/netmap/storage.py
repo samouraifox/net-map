@@ -448,6 +448,39 @@ class Storage:
             hosts_seen=row[7], notes=row[8],
         )
 
+    def list_scans(
+        self,
+        *,
+        status: str | None = None,
+        since: datetime | None = None,
+        limit: int = 50,
+    ) -> list[Scan]:
+        sql = (
+            "SELECT id, started_at, ended_at, source, target, mode, status, "
+            "hosts_seen, notes FROM scan WHERE 1=1"
+        )
+        params: list[object] = []
+        if status:
+            sql += " AND status=?"
+            params.append(status)
+        if since:
+            sql += " AND started_at >= ?"
+            params.append(_iso(since))
+        sql += " ORDER BY started_at DESC LIMIT ?"
+        params.append(limit)
+
+        rows = self._conn.execute(sql, params).fetchall()
+        return [
+            Scan(
+                id=r[0],
+                started_at=datetime.fromisoformat(r[1]),
+                ended_at=datetime.fromisoformat(r[2]) if r[2] else None,
+                source=r[3], target=r[4], mode=r[5], status=r[6],
+                hosts_seen=r[7], notes=r[8],
+            )
+            for r in rows
+        ]
+
     # ---------- host_snapshot ----------
     def insert_snapshot(self, snap: HostSnapshot) -> None:
         self._conn.execute(

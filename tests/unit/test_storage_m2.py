@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from netmap.models import Event, Host, Port, Subnet
+from netmap.models import Event, Host, Port, Scan, Subnet
 from netmap.storage import Storage
 
 
@@ -128,3 +128,38 @@ def test_list_recent_events_filters_by_host_id_and_limit():
     assert len(rows) == 3
     assert all(e.host_id == hid for e in rows)
     assert [e.payload["port"] for e in rows] == [84, 83, 82]
+
+
+def test_list_scans_orders_newest_first_and_respects_limit():
+    db = Storage(":memory:")
+    base = _ts("2026-05-25T10:00:00")
+    for i in range(5):
+        db.start_scan(Scan(
+            started_at=base.replace(minute=i), source="cli.scan",
+            target="192.168.1.0/24", mode="discover", status="ok",
+            hosts_seen=10,
+        ))
+
+    rows = db.list_scans(limit=3)
+
+    assert len(rows) == 3
+    assert rows[0].started_at > rows[1].started_at > rows[2].started_at
+
+
+def test_list_scans_filters_by_status_and_since():
+    db = Storage(":memory:")
+    base = _ts("2026-05-25T10:00:00")
+    db.start_scan(Scan(
+        started_at=base, source="cli.scan", target="x", mode="discover",
+        status="error", hosts_seen=0,
+    ))
+    ok_id = db.start_scan(Scan(
+        started_at=base.replace(minute=5), source="cli.scan", target="x",
+        mode="discover", status="ok", hosts_seen=3,
+    ))
+
+    only_ok = db.list_scans(status="ok")
+    assert [s.id for s in only_ok] == [ok_id]
+
+    after = db.list_scans(since=base.replace(minute=3))
+    assert [s.id for s in after] == [ok_id]
