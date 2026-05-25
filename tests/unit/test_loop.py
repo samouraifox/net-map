@@ -9,10 +9,10 @@ from typing import ClassVar
 
 import pytest
 
-from netmap.config import Config
+from netmap.config import Config, ScanCfg
 from netmap.models import Fact, MacFact, Subnet
 from netmap.scanner.base import ScanMode
-from netmap.scanner.loop import maybe_run
+from netmap.scanner.loop import maybe_run, scan_loop
 from netmap.server.events import AsyncBus
 from netmap.storage import Storage
 
@@ -139,3 +139,68 @@ async def test_maybe_run_finishes_scan_with_ok_status_on_happy_path():
     await asyncio.sleep(0.1)
     assert db.get_scan(scan_id).status == "ok"
     assert in_flight == set()
+
+
+@pytest.mark.asyncio
+async def test_scan_loop_dispatches_discover_each_tick_until_stop_is_set(monkeypatch):
+    db = Storage(":memory:")
+    _seed_subnet(db)
+    bus = AsyncBus()
+    in_flight: set[tuple[str, str]] = set()
+    stop = asyncio.Event()
+
+    cfg = Config(scan=ScanCfg(interval_s=1, default_scan_interval_s=99_999))
+
+    calls: list[ScanMode] = []
+    async def fake_maybe_run(*, mode, **_):
+        calls.append(mode)
+        return 1
+    monkeypatch.setattr("netmap.scanner.loop.maybe_run", fake_maybe_run)
+
+    task = asyncio.create_task(scan_loop(db, bus, stop, cfg, in_flight))
+    await asyncio.sleep(2.2)
+    stop.set()
+    await asyncio.wait_for(task, timeout=2)
+
+    assert calls.count(ScanMode.DISCOVER) >= 2
+
+
+@pytest.mark.asyncio
+async def test_scan_loop_dispatches_default_after_interval(monkeypatch):
+    db = Storage(":memory:")
+    _seed_subnet(db)
+    bus = AsyncBus()
+    in_flight: set[tuple[str, str]] = set()
+    stop = asyncio.Event()
+
+    # discover every 1s; default every 2s
+    cfg = Config(scan=ScanCfg(interval_s=1, default_scan_interval_s=2))
+
+    calls: list[ScanMode] = []
+    async def fake_maybe_run(*, mode, **_):
+        calls.append(mode)
+        return 1
+    monkeypatch.setattr("netmap.scanner.loop.maybe_run", fake_maybe_run)
+
+    task = asyncio.create_task(scan_loop(db, bus, stop, cfg, in_flight))
+    await asyncio.sleep(2.5)
+    stop.set()
+    await asyncio.wait_for(task, timeout=2)
+
+    assert ScanMode.DEFAULT in calls
+
+
+@pytest.mark.asyncio
+async def test_scan_loop_exits_promptly_on_stop():
+    db = Storage(":memory:")
+    bus = AsyncBus()
+    in_flight: set[tuple[str, str]] = set()
+    stop = asyncio.Event()
+    cfg = Config(scan=ScanCfg(interval_s=60, default_scan_interval_s=600))
+
+    task = asyncio.create_task(scan_loop(db, bus, stop, cfg, in_flight))
+    await asyncio.sleep(0.1)
+    stop.set()
+    await asyncio.wait_for(task, timeout=2)
+    # task should return without exception
+    assert task.done() and task.exception() is None

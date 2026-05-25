@@ -9,6 +9,7 @@ single funnel.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -148,3 +149,42 @@ async def _run_scan_work(
         ))
     finally:
         in_flight.discard(key)
+
+
+async def scan_loop(
+    db: Storage,
+    bus: AsyncBus,
+    stop: asyncio.Event,
+    cfg: Config,
+    in_flight: set[tuple[str, str]],
+) -> None:
+    """Tick `discover` every `cfg.scan.interval_s` and `default` every
+    `cfg.scan.default_scan_interval_s`. Exits when `stop` is set."""
+    last_default = 0.0
+    while not stop.is_set():
+        subnets = [s for s in db.list_subnets() if s.enabled]
+        targets: list[IPv4Network] = []
+        for s in subnets:
+            try:
+                targets.append(IPv4Network(s.cidr))
+            except (ValueError, TypeError):
+                logger.warning("skipping unparseable subnet cidr: %s", s.cidr)
+
+        if targets:
+            await maybe_run(
+                mode=ScanMode.DISCOVER, targets=targets,
+                db=db, bus=bus, cfg=cfg, in_flight=in_flight,
+                source="loop.discover",
+            )
+            if time.monotonic() - last_default > cfg.scan.default_scan_interval_s:
+                asyncio.create_task(maybe_run(
+                    mode=ScanMode.DEFAULT, targets=targets,
+                    db=db, bus=bus, cfg=cfg, in_flight=in_flight,
+                    source="loop.default",
+                ))
+                last_default = time.monotonic()
+
+        # TimeoutError is the expected control flow: it means "interval
+        # elapsed without a stop signal — go around the loop again".
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=cfg.scan.interval_s)
