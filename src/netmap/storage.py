@@ -221,6 +221,12 @@ class Storage:
         ).fetchone()
         return self._row_to_host(row) if row else None
 
+    def get_host(self, host_id: int) -> Host | None:
+        row = self._conn.execute(
+            self._SELECT_HOST + " WHERE id=?", (host_id,)
+        ).fetchone()
+        return self._row_to_host(row) if row else None
+
     def upsert_host(self, h: Host) -> Host:
         """Upsert a host using MAC-primary / IP-fallback identity.
 
@@ -500,6 +506,23 @@ class Storage:
         sql += " ORDER BY ts DESC LIMIT ?"
         params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
+        return [
+            Event(
+                id=r[0], ts=datetime.fromisoformat(r[1]), scan_id=r[2],
+                host_id=r[3], kind=r[4],
+                payload=json.loads(r[5]) if r[5] else None,
+            )
+            for r in rows
+        ]
+
+    def list_recent_events(
+        self, *, host_id: int, limit: int = 50,
+    ) -> list[Event]:
+        rows = self._conn.execute(
+            "SELECT id, ts, scan_id, host_id, kind, payload FROM event "
+            "WHERE host_id=? ORDER BY ts DESC LIMIT ?",
+            (host_id, limit),
+        ).fetchall()
         return [
             Event(
                 id=r[0], ts=datetime.fromisoformat(r[1]), scan_id=r[2],

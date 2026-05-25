@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from netmap.models import Subnet
+from netmap.models import Event, Host, Port, Subnet
 from netmap.storage import Storage
 
 
@@ -28,9 +28,6 @@ def test_list_subnets_returns_all_rows_ordered_by_id():
     assert rows[0].source == "config" and rows[0].enabled is True
     assert rows[1].source == "discovered" and rows[1].enabled is False
     assert rows[1].hop_distance == 1
-
-
-from netmap.models import Host, Port
 
 
 def _make_host(db: Storage, *, mac: str | None, ip: str, hostname: str | None = None,
@@ -98,3 +95,36 @@ def test_list_host_summaries_filters_by_subnet_membership():
     rows = db.list_host_summaries(subnet_id=sid)
 
     assert [r["primary_ip"] for r in rows] == ["192.168.1.10"]
+
+
+def test_get_host_returns_dto_or_none():
+    db = Storage(":memory:")
+    hid = _make_host(db, mac="aa:bb:cc:dd:ee:01", ip="192.168.1.10",
+                     hostname="printer-lobby")
+
+    h = db.get_host(hid)
+    assert h is not None
+    assert h.primary_ip == "192.168.1.10"
+    assert h.hostname == "printer-lobby"
+
+    assert db.get_host(9999) is None
+
+
+def test_list_recent_events_filters_by_host_id_and_limit():
+    db = Storage(":memory:")
+    hid = _make_host(db, mac="aa:bb:cc:dd:ee:01", ip="192.168.1.10")
+    other = _make_host(db, mac="aa:bb:cc:dd:ee:02", ip="192.168.1.11")
+    base = _ts("2026-05-25T10:00:00")
+    for i in range(5):
+        db.insert_event(Event(
+            ts=base.replace(second=i), host_id=hid, kind="port.opened",
+            payload={"port": 80 + i},
+        ))
+    db.insert_event(Event(
+        ts=base, host_id=other, kind="host.new", payload=None,
+    ))
+
+    rows = db.list_recent_events(host_id=hid, limit=3)
+    assert len(rows) == 3
+    assert all(e.host_id == hid for e in rows)
+    assert [e.payload["port"] for e in rows] == [84, 83, 82]
