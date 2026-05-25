@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from netmap.models import Edge, Host, Port, Subnet
+from netmap.models import Edge, Event, Host, HostSnapshot, Port, Scan, Subnet
 from netmap.storage import Storage
 
 EXPECTED_TABLES = {
@@ -161,3 +161,48 @@ class TestEdge:
         db.upsert_edge(e.model_copy(update={"last_seen": T1}))
         edges = db.list_edges()
         assert edges[0].weight == 2
+
+
+class TestScan:
+    def test_start_then_finish_scan(self, db: Storage) -> None:
+        sid = db.start_scan(Scan(
+            started_at=T0, source="active.nmap",
+            target="192.168.1.0/24", mode="discover", status="running",
+        ))
+        db.finish_scan(sid, ended_at=T1, status="ok", hosts_seen=12)
+        s = db.get_scan(sid)
+        assert s.status == "ok"
+        assert s.hosts_seen == 12
+
+
+class TestSnapshot:
+    def test_insert_snapshot_serializes_open_ports(self, db: Storage) -> None:
+        host = db.upsert_host(_host("192.168.1.5"))
+        sid = db.start_scan(Scan(
+            started_at=T0, source="active.nmap", status="running",
+        ))
+        snap = HostSnapshot(
+            scan_id=sid, host_id=host.id, ip="192.168.1.5",
+            open_ports=[{"proto": "tcp", "port": 22}],
+            captured_at=T0,
+        )
+        db.insert_snapshot(snap)
+        latest = db.latest_snapshot(host.id)
+        assert latest is not None
+        assert latest.open_ports == [{"proto": "tcp", "port": 22}]
+
+
+class TestEvent:
+    def test_insert_and_list(self, db: Storage) -> None:
+        sid = db.start_scan(Scan(
+            started_at=T0, source="active.nmap", status="running",
+        ))
+        host = db.upsert_host(_host("192.168.1.5"))
+        evt = Event(
+            ts=T0, scan_id=sid, host_id=host.id, kind="host.new",
+            payload={"ip": "192.168.1.5"},
+        )
+        db.insert_event(evt)
+        events = db.list_events()
+        assert len(events) == 1
+        assert events[0].kind == "host.new"

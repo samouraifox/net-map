@@ -6,13 +6,14 @@ needed (called from `loop.py` in M2).
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from netmap.models import Edge, Host, Port, Subnet
+from netmap.models import Edge, Event, Host, HostSnapshot, Port, Scan, Subnet
 
 
 def _iso(dt: datetime) -> str:
@@ -319,6 +320,107 @@ class Storage:
             Edge(
                 id=r[0], src_host_id=r[1], dst_host_id=r[2], kind=r[3],
                 weight=r[4], last_seen=datetime.fromisoformat(r[5]),
+            )
+            for r in rows
+        ]
+
+    # ---------- scan ----------
+    def start_scan(self, s: Scan) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO scan(started_at, source, target, mode, status, "
+            "hosts_seen, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                _iso(s.started_at), s.source, s.target, s.mode, s.status,
+                s.hosts_seen, s.notes,
+            ),
+        )
+        return int(cur.lastrowid)
+
+    def finish_scan(
+        self, scan_id: int, *, ended_at: datetime, status: str, hosts_seen: int
+    ) -> None:
+        self._conn.execute(
+            "UPDATE scan SET ended_at=?, status=?, hosts_seen=? WHERE id=?",
+            (_iso(ended_at), status, hosts_seen, scan_id),
+        )
+
+    def get_scan(self, scan_id: int) -> Scan:
+        row = self._conn.execute(
+            "SELECT id, started_at, ended_at, source, target, mode, status, "
+            "hosts_seen, notes FROM scan WHERE id=?",
+            (scan_id,),
+        ).fetchone()
+        return Scan(
+            id=row[0],
+            started_at=datetime.fromisoformat(row[1]),
+            ended_at=datetime.fromisoformat(row[2]) if row[2] else None,
+            source=row[3], target=row[4], mode=row[5], status=row[6],
+            hosts_seen=row[7], notes=row[8],
+        )
+
+    # ---------- host_snapshot ----------
+    def insert_snapshot(self, snap: HostSnapshot) -> None:
+        self._conn.execute(
+            "INSERT INTO host_snapshot(scan_id, host_id, ip, hostname, "
+            "os_detail, device_type, open_ports, captured_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                snap.scan_id, snap.host_id, snap.ip, snap.hostname,
+                snap.os_detail, snap.device_type,
+                json.dumps(snap.open_ports), _iso(snap.captured_at),
+            ),
+        )
+
+    def latest_snapshot(self, host_id: int) -> HostSnapshot | None:
+        row = self._conn.execute(
+            "SELECT id, scan_id, host_id, ip, hostname, os_detail, "
+            "device_type, open_ports, captured_at FROM host_snapshot "
+            "WHERE host_id=? ORDER BY captured_at DESC LIMIT 1",
+            (host_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return HostSnapshot(
+            id=row[0], scan_id=row[1], host_id=row[2], ip=row[3],
+            hostname=row[4], os_detail=row[5], device_type=row[6],
+            open_ports=json.loads(row[7]) if row[7] else [],
+            captured_at=datetime.fromisoformat(row[8]),
+        )
+
+    # ---------- event ----------
+    def insert_event(self, e: Event) -> None:
+        self._conn.execute(
+            "INSERT INTO event(ts, scan_id, host_id, kind, payload) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                _iso(e.ts), e.scan_id, e.host_id, e.kind,
+                json.dumps(e.payload) if e.payload else None,
+            ),
+        )
+
+    def list_events(
+        self, *, since: datetime | None = None,
+        host_id: int | None = None, limit: int = 500,
+    ) -> list[Event]:
+        sql = (
+            "SELECT id, ts, scan_id, host_id, kind, payload "
+            "FROM event WHERE 1=1"
+        )
+        params: list[object] = []
+        if since:
+            sql += " AND ts >= ?"
+            params.append(_iso(since))
+        if host_id:
+            sql += " AND host_id = ?"
+            params.append(host_id)
+        sql += " ORDER BY ts DESC LIMIT ?"
+        params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        return [
+            Event(
+                id=r[0], ts=datetime.fromisoformat(r[1]), scan_id=r[2],
+                host_id=r[3], kind=r[4],
+                payload=json.loads(r[5]) if r[5] else None,
             )
             for r in rows
         ]
