@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal, NamedTuple
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HostKey(NamedTuple):
@@ -31,7 +31,7 @@ class MacFact(_Fact):
 class PortFact(_Fact):
     host_key: HostKey
     proto: Literal["tcp", "udp"]
-    port: int
+    port: int = Field(ge=1, le=65535)
     state: str
     service: str | None = None
     version: str | None = None
@@ -40,7 +40,7 @@ class PortFact(_Fact):
 class EdgeFact(_Fact):
     src: HostKey
     dst: HostKey
-    kind: str  # "gateway" | "arp" | "broadcast" | "observed"
+    kind: Literal["gateway", "arp", "broadcast", "observed"]
 
 
 class OsFact(_Fact):
@@ -57,7 +57,7 @@ class HostnameFact(_Fact):
 
 class DeviceTypeFact(_Fact):
     host_key: HostKey
-    device_type: str  # router | server | endpoint | iot | unknown
+    device_type: Literal["router", "server", "endpoint", "iot", "unknown"]
 
 
 Fact = MacFact | PortFact | EdgeFact | OsFact | HostnameFact | DeviceTypeFact

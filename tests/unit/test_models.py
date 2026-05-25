@@ -77,3 +77,38 @@ class TestFacts:
     def test_device_type_fact(self) -> None:
         f = DeviceTypeFact(host_key=HostKey(mac=None, ip="1.1.1.1"), device_type="router")
         assert f.device_type == "router"
+
+    def test_port_fact_rejects_port_zero(self) -> None:
+        with pytest.raises(ValidationError):
+            PortFact(host_key=HostKey(mac=None, ip="1.1.1.1"),
+                     proto="tcp", port=0, state="open")
+
+    def test_port_fact_rejects_port_above_65535(self) -> None:
+        with pytest.raises(ValidationError):
+            PortFact(host_key=HostKey(mac=None, ip="1.1.1.1"),
+                     proto="tcp", port=65536, state="open")
+
+    def test_edge_fact_rejects_unknown_kind(self) -> None:
+        with pytest.raises(ValidationError):
+            EdgeFact(
+                src=HostKey(mac=None, ip="1.1.1.1"),
+                dst=HostKey(mac=None, ip="1.1.1.2"),
+                kind="nonsense",  # type: ignore[arg-type]
+            )
+
+    def test_device_type_fact_rejects_unknown_type(self) -> None:
+        with pytest.raises(ValidationError):
+            DeviceTypeFact(host_key=HostKey(mac=None, ip="1.1.1.1"),
+                            device_type="toaster")  # type: ignore[arg-type]
+
+
+class TestFactConfig:
+    def test_frozen(self) -> None:
+        f = MacFact(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5", src="active.arp")
+        with pytest.raises(ValidationError):
+            f.src = "different"  # type: ignore[misc]
+
+    def test_extra_forbidden(self) -> None:
+        with pytest.raises(ValidationError):
+            MacFact(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5",
+                    src="active.arp", surprise="not-allowed")  # type: ignore[call-arg]
