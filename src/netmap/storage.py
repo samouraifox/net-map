@@ -171,6 +171,20 @@ class Storage:
             first_seen=datetime.fromisoformat(row[6]),
         )
 
+    def list_subnets(self) -> list[Subnet]:
+        rows = self._conn.execute(
+            "SELECT id, cidr, label, source, enabled, hop_distance, first_seen "
+            "FROM subnet ORDER BY id"
+        ).fetchall()
+        return [
+            Subnet(
+                id=r[0], cidr=r[1], label=r[2], source=r[3],
+                enabled=bool(r[4]), hop_distance=r[5],
+                first_seen=datetime.fromisoformat(r[6]),
+            )
+            for r in rows
+        ]
+
     # ---------- host ----------
     _SELECT_HOST = (
         "SELECT id, mac, primary_ip, hostname, vendor, os_family, os_detail, "
