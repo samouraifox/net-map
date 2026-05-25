@@ -12,7 +12,7 @@ class TestVersion:
     def test_version_prints(self) -> None:
         r = runner.invoke(app, ["version"])
         assert r.exit_code == 0
-        assert "0.1.0" in r.stdout
+        assert "0.2.0" in r.stdout
 
 
 class TestScanCommand:

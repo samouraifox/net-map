@@ -1,6 +1,6 @@
 [project]
 name = "netmap"
-version = "0.1.0"
+version = "0.2.0"
 description = "Continuous inventory + topology visualizer for local networks"
 requires-python = ">=3.13"
 authors = [{ name = "Aymen", email = "aymen09112004@gmail.com" }]
@@ -10,6 +10,9 @@ dependencies = [
     "typer>=0.16.0",
     "pydantic>=2.9",
     "scapy>=2.6",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sse-starlette>=2.1",
 ]
 
 [project.optional-dependencies]
@@ -18,6 +21,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-mock>=3.14",
     "anyio>=4.6",
+    "httpx>=0.28",
     "ruff>=0.6",
 ]
 
@@ -33,6 +37,7 @@ packages = ["src/netmap"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/netmap/data" = "netmap/data"
+"src/netmap/ui" = "netmap/ui"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
