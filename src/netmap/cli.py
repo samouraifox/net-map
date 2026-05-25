@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from ipaddress import IPv4Network
 from pathlib import Path
@@ -12,9 +13,9 @@ import typer
 from netmap import __version__
 from netmap.config import DEFAULT_CONFIG_PATH, load_config
 from netmap.correlation import correlate
-from netmap.models import Scan
+from netmap.models import Fact, Scan
 from netmap.scanner.arp_scanner import ArpScanner
-from netmap.scanner.base import ScanMode
+from netmap.scanner.base import ActiveScanner, ScanMode
 from netmap.scanner.nmap_scanner import NmapScanner
 from netmap.scanner.safety import SafetyError, SafetyPolicy, validate_target
 from netmap.storage import Storage
@@ -100,7 +101,7 @@ def scan(
 
 async def _run_scan(
     db: Storage,
-    scanners: list,
+    scanners: list[ActiveScanner],
     targets: list[IPv4Network],
     mode: ScanMode,
 ) -> None:
@@ -112,7 +113,7 @@ async def _run_scan(
             mode=mode.value, status="running",
         )
     )
-    facts: list = []
+    facts: list[Fact] = []
     try:
         for target in targets:
             for scanner in scanners:
@@ -204,6 +205,5 @@ def config_show_cmd(
     config: Annotated[Path, typer.Option("--config")] = DEFAULT_CONFIG_PATH,
 ) -> None:
     """Print the resolved configuration as JSON."""
-    import json as _json
     cfg = load_config(config)
-    typer.echo(_json.dumps(cfg.model_dump(), indent=2, default=str))
+    typer.echo(json.dumps(cfg.model_dump(), indent=2, default=str))

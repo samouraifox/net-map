@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from ipaddress import IPv4Address, IPv4Network
 
 from netmap.models import (
     DeviceTypeFact,
@@ -24,6 +25,7 @@ from netmap.models import (
     HostSnapshot,
     MacFact,
     OsFact,
+    Port,
     PortFact,
 )
 from netmap.oui import lookup_vendor
@@ -38,9 +40,27 @@ def correlate(
     now: datetime | None = None,
     observed_subnets: list[str] | None = None,
 ) -> list[Event]:
-    """Merge scanner-emitted facts into host records and emit change events."""
+    """Merge scanner-emitted facts into host records and emit change events.
+
+    Args:
+        facts: scanner-emitted observations to merge.
+        db: storage handle for upserts, snapshot writes, and event recording.
+        scan_id: the row in ``scan`` to attribute these events to.
+        now: timestamp for first_seen / last_seen / event ts. Defaults to UTC now.
+        observed_subnets: list of CIDRs the scan actually probed for *ports*.
+            Closure detection (``port.closed`` events) only fires for hosts
+            whose primary_ip falls inside one of these CIDRs. **Callers MUST
+            pass an empty list (or None) for discover-only scans** — passing
+            a non-empty list signals "I just probed these subnets' ports;
+            close anything I didn't re-observe." Getting this wrong will
+            emit spurious port.closed events for hosts the scan never
+            actually inspected.
+
+    Returns:
+        the list of events emitted (also inserted into the ``event`` table).
+    """
     now = now or datetime.now(tz=UTC)
-    observed_subnets = observed_subnets or []
+    observed_nets = [IPv4Network(c) for c in (observed_subnets or [])]
     events: list[Event] = []
 
     by_key: dict[HostKey, list[Fact]] = {}
@@ -69,7 +89,7 @@ def correlate(
             ))
 
         events.extend(_apply_ports(
-            db, updated, host_facts, scan_id, now, observed_subnets,
+            db, updated, host_facts, scan_id, now, observed_nets,
         ))
 
         # Snapshot the host's post-update state (after _apply_ports has run).
@@ -142,11 +162,9 @@ def _apply_ports(
     facts: list[Fact],
     scan_id: int,
     now: datetime,
-    observed_subnets: list[str],
+    observed_nets: list[IPv4Network],
 ) -> list[Event]:
     """Apply port facts for one host; emit port.opened / port.closed events."""
-    from netmap.models import Port
-
     events: list[Event] = []
     seen: set[tuple[str, int]] = set()
 
@@ -175,12 +193,12 @@ def _apply_ports(
             ))
 
     # Closure detection requires the host's primary_ip to fall within one of
-    # the ``observed_subnets``. A discover-only scan must omit ``observed_subnets``
+    # the ``observed_nets``. A discover-only scan must omit ``observed_subnets``
     # (or pass an empty list) so it cannot emit spurious closures. A port-aware
     # scan passes the subnets it actually probed, which both:
-    #   - gates ARP-only scans (no observed_subnets → no closures), and
+    #   - gates ARP-only scans (no observed_nets → no closures), and
     #   - prevents a scan of subnet A from closing ports on subnet B.
-    if _host_in_observed(host, observed_subnets):
+    if _host_in_observed(host, observed_nets):
         for p in db.list_ports(host.id, only_open=True):
             if (p.protocol, p.number) not in seen:
                 db.close_port(host.id, p.protocol, p.number)
@@ -192,12 +210,11 @@ def _apply_ports(
     return events
 
 
-def _host_in_observed(host: Host, observed_subnets: list[str]) -> bool:
-    if not observed_subnets:
+def _host_in_observed(host: Host, observed_nets: list[IPv4Network]) -> bool:
+    if not observed_nets:
         return False
-    from ipaddress import IPv4Address, IPv4Network
     try:
         ip = IPv4Address(host.primary_ip)
     except (ValueError, TypeError):
         return False
-    return any(ip in IPv4Network(c) for c in observed_subnets)
+    return any(ip in n for n in observed_nets)
