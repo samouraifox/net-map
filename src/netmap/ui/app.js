@@ -219,9 +219,220 @@ async function onScanNow() {
 
 window.addEventListener("DOMContentLoaded", bootstrap);
 
-// -------------------- placeholders for sections 2-4 --------------------
-// These will be replaced by the real implementations in Tasks 24-26.
-function initGraph() {}
-function renderGraph() {}
+// -------------------- section 2: Cytoscape graph --------------------
+
+function _registerCoseBilkent() {
+  if (window.cytoscape && window.cytoscapeCoseBilkent) {
+    cytoscape.use(window.cytoscapeCoseBilkent);
+  }
+}
+
+// Inline an <svg><use href="#ic-router"/></svg> as a data URI suitable for
+// Cytoscape's `background-image`. Cytoscape clones the document node so we
+// can't directly reference `<use href>` — we serialize the resolved symbol.
+const ICON_SVG_CACHE = new Map();
+function iconDataUri(name, color) {
+  const key = `${name}|${color}`;
+  if (ICON_SVG_CACHE.has(key)) return ICON_SVG_CACHE.get(key);
+  const symbol = document.getElementById(name);
+  if (!symbol) return "";
+  const viewBox = symbol.getAttribute("viewBox") || "0 0 24 24";
+  const inner = symbol.innerHTML;
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='${viewBox}' ` +
+    `fill='none' stroke='${color}' stroke-width='1.6' ` +
+    `stroke-linecap='round' stroke-linejoin='round'>${inner}</svg>`;
+  const uri = "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+  ICON_SVG_CACHE.set(key, uri);
+  return uri;
+}
+
+function hostNodeColor(h) {
+  // Risk dominates color. Default = text. Trusted hosts get the accent.
+  // Heuristic: any open port -> normal; trusted overrides; otherwise muted.
+  if (h.trusted) return getCss("--accent");
+  if ((h.open_port_count || 0) > 0) return getCss("--text");
+  return getCss("--text-muted");
+}
+
+function getCss(varname) {
+  return getComputedStyle(document.documentElement).getPropertyValue(varname).trim();
+}
+
+function initGraph() {
+  _registerCoseBilkent();
+  State.cy = cytoscape({
+    container: document.getElementById("cy"),
+    wheelSensitivity: 0.15,
+    minZoom: 0.3, maxZoom: 3.0,
+    style: [
+      {
+        selector: "node[type='subnet']",
+        style: {
+          "background-color": "transparent",
+          "border-color": getCss("--border"),
+          "border-style": "dashed",
+          "border-width": 1,
+          "shape": "round-rectangle",
+          "label": "data(label)",
+          "text-valign": "top",
+          "text-halign": "left",
+          "text-margin-x": 6,
+          "text-margin-y": 4,
+          "color": getCss("--text-muted"),
+          "font-size": 10,
+          "font-family": "Geist Mono, monospace",
+          "padding": 16,
+        },
+      },
+      {
+        selector: "node[type='host']",
+        style: {
+          "shape": "round-rectangle",
+          "width": 36, "height": 36,
+          "background-color": getCss("--surface"),
+          "background-image": "data(iconUri)",
+          "background-fit": "contain",
+          "background-clip": "none",
+          "border-color": getCss("--border"),
+          "border-width": 1,
+          "label": "data(label)",
+          "text-valign": "bottom",
+          "text-margin-y": 6,
+          "color": getCss("--text"),
+          "font-size": 10,
+          "font-family": "Geist Mono, monospace",
+        },
+      },
+      {
+        selector: "node[type='host'][risk='high']",
+        style: { "border-color": getCss("--risk-red"), "border-width": 2 },
+      },
+      {
+        selector: "node[type='host'][risk='elev']",
+        style: { "border-color": getCss("--risk-yel") },
+      },
+      {
+        selector: "node:selected",
+        style: {
+          "border-color": getCss("--accent"),
+          "border-width": 2,
+        },
+      },
+      {
+        selector: "edge",
+        style: {
+          "width": 1,
+          "line-color": getCss("--border"),
+          "curve-style": "bezier",
+        },
+      },
+      {
+        selector: "edge[kind='gateway']",
+        style: { "width": 2, "line-color": getCss("--accent") },
+      },
+    ],
+  });
+
+  State.cy.on("tap", "node[type='host']", (evt) => {
+    const id = Number(evt.target.id().replace(/^h/, ""));
+    selectHost(id);
+  });
+  State.cy.on("tap", (evt) => {
+    if (evt.target === State.cy) selectHost(null);
+  });
+}
+
+function _maxRiskFor(host) {
+  // We only know open ports from host detail; in the summary view we
+  // approximate via open_port_count (any open ports → "norm"). Real risk
+  // colors come once the user opens the host detail.
+  return (host.open_port_count || 0) > 0 ? "norm" : "info";
+}
+
+function renderGraph() {
+  if (!State.cy) return;
+  const cy = State.cy;
+  cy.batch(() => {
+    cy.elements().remove();
+
+    const subnetById = new Map(State.subnets.map((s) => [s.id, s]));
+    const subnetByCidr = new Map(State.subnets.map((s) => [s.cidr, s]));
+    for (const s of State.subnets) {
+      cy.add({
+        group: "nodes",
+        data: { id: "s" + s.id, type: "subnet", label: s.cidr },
+      });
+    }
+
+    for (const h of State.hosts.values()) {
+      const parent = _subnetForIp(h.primary_ip, State.subnets);
+      cy.add({
+        group: "nodes",
+        data: {
+          id: "h" + h.id, type: "host",
+          parent: parent ? "s" + parent.id : undefined,
+          label: h.hostname || h.primary_ip,
+          iconUri: iconDataUri(iconForDevice(h.device_type), hostNodeColor(h)),
+          risk: _maxRiskFor(h),
+        },
+      });
+    }
+
+    cy.layout({
+      name: "cose-bilkent",
+      animate: false,
+      nodeRepulsion: 4500,
+      idealEdgeLength: 80,
+      tile: true,
+      padding: 30,
+    }).run();
+  });
+
+  $("#canvasEmpty").hidden = State.hosts.size > 0;
+}
+
+function _subnetForIp(ip, subnets) {
+  // Lightweight CIDR membership check (IPv4). Returns first matching subnet.
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => isNaN(n))) return null;
+  const ipInt = ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+  for (const s of subnets) {
+    const [base, maskStr] = s.cidr.split("/");
+    const baseParts = base.split(".").map(Number);
+    if (baseParts.length !== 4 || baseParts.some((n) => isNaN(n))) continue;
+    const baseInt = ((baseParts[0] << 24) | (baseParts[1] << 16) |
+                     (baseParts[2] << 8) | baseParts[3]) >>> 0;
+    const mask = (~((1 << (32 - Number(maskStr))) - 1)) >>> 0;
+    if ((ipInt & mask) === (baseInt & mask)) return s;
+  }
+  return null;
+}
+
+function selectHost(id) {
+  State.selectedHostId = id;
+  if (State.cy) {
+    State.cy.elements(":selected").unselect();
+    if (id != null) {
+      const node = State.cy.getElementById("h" + id);
+      if (node && node.length) node.select();
+    }
+  }
+  if (id == null) {
+    State.hostDetail = null;
+    renderHostDetail();
+    return;
+  }
+  api.hostDetail(id).then((d) => {
+    State.hostDetail = d;
+    renderHostDetail();
+    renderTopbar();
+  }).catch((exc) => toast("could not load host: " + exc.message));
+}
+
+// -------------------- section 3: SSE + reducer (Task 25) --------------------
 function connectSse() {}
+
+// -------------------- section 4: host detail + timeline (Task 26) --------------------
+function renderHostDetail() {}
 function appendEvent(_ev) {}
