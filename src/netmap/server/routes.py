@@ -8,11 +8,20 @@ and the test app without DI plumbing.
 from __future__ import annotations
 
 from datetime import datetime
+from ipaddress import IPv4Network
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 
 from netmap.models import Event, Scan, Subnet
-from netmap.server.schemas import HostDetail, HostIp, HostSummary
+from netmap.scanner.loop import maybe_run
+from netmap.scanner.safety import SafetyError, SafetyPolicy, validate_target
+from netmap.server.schemas import (
+    HostDetail,
+    HostIp,
+    HostSummary,
+    ScanRequest,
+    ScanResponse,
+)
 
 api = APIRouter(prefix="/api/v1")
 
@@ -96,6 +105,63 @@ def get_events(
     if kind:
         events = [e for e in events if e.kind == kind]
     return events
+
+
+def _policy_from_cfg(cfg) -> SafetyPolicy:
+    return SafetyPolicy(
+        deny_cidrs=tuple(cfg.safety.deny_cidrs),
+        allow_public_scan=cfg.safety.allow_public_scan,
+        max_target_hosts=cfg.safety.max_target_hosts,
+        max_hop_distance=cfg.safety.max_hop_distance,
+    )
+
+
+@api.post("/scans", response_model=ScanResponse)
+async def post_scan(request: Request, req: ScanRequest):
+    state = _state(request)
+    cfg = state.cfg
+    db = state.db
+    bus = state.bus
+    in_flight = state.in_flight
+
+    cidrs = req.targets
+    if not cidrs:
+        cidrs = [s.cidr for s in db.list_subnets() if s.enabled]
+    if not cidrs:
+        raise HTTPException(
+            status_code=400,
+            detail="no targets supplied and no enabled subnets configured",
+        )
+
+    policy = _policy_from_cfg(cfg)
+    nets: list[IPv4Network] = []
+    for cidr in cidrs:
+        try:
+            nets.append(validate_target(cidr, policy, confirm=req.confirm))
+        except SafetyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    signature = ",".join(sorted(str(n) for n in nets))
+    if (req.mode.value, signature) in in_flight:
+        raise HTTPException(
+            status_code=409,
+            detail=f"scan already running on this target ({signature})",
+        )
+
+    scan_id = await maybe_run(
+        mode=req.mode, targets=nets,
+        db=db, bus=bus, cfg=cfg, in_flight=in_flight,
+        source="api.post_scan",
+    )
+    if scan_id is None:
+        # Race: another request snuck the same target into in_flight between
+        # our check and maybe_run's check. Surface as 409.
+        raise HTTPException(
+            status_code=409,
+            detail=f"scan already running on this target ({signature})",
+        )
+
+    return ScanResponse(scan_id=scan_id, accepted_targets=[str(n) for n in nets])
 
 
 def register(app: FastAPI) -> None:
