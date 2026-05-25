@@ -149,6 +149,60 @@ async def _run_scan(
     )
 
 
+@app.command()
+def up(
+    bind: Annotated[
+        str | None, typer.Option("--bind", help="Override [server].bind")
+    ] = None,
+    port: Annotated[
+        int | None, typer.Option("--port", help="Override [server].port")
+    ] = None,
+    target: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--target", "-t",
+            help="Explicit CIDR(s) — bypass auto-detect. Pass multiple times.",
+        ),
+    ] = None,
+    db_path: Annotated[Path, typer.Option("--db")] = DEFAULT_DB_PATH,
+    config_path: Annotated[Path, typer.Option("--config")] = DEFAULT_CONFIG_PATH,
+    open_browser: Annotated[
+        bool,
+        typer.Option(
+            "--open/--no-open",
+            help="Open the UI in the default browser after startup.",
+        ),
+    ] = True,
+) -> None:
+    """Start the foreground web server + scan loop.
+
+    Requires root or CAP_NET_RAW + CAP_NET_ADMIN. Defaults to 127.0.0.1:8765;
+    auto-detects the local CIDR if no --target is given and the subnet table
+    is empty. Ctrl-C stops everything cleanly.
+    """
+    import webbrowser
+
+    from netmap.server import app as server_app
+
+    cfg = load_config(config_path)
+    if bind is not None:
+        cfg.server.bind = bind
+    if port is not None:
+        cfg.server.port = port
+
+    cli_targets = list(target) if target else None
+
+    if open_browser:
+        url = f"http://{cfg.server.bind}:{cfg.server.port}/"
+        try:
+            webbrowser.open(url, new=2)
+        except webbrowser.Error:
+            typer.echo(f"open {url} in your browser", err=True)
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    server_app.run(cfg, db_path=db_path, cli_targets=cli_targets)
+
+
 db_app = typer.Typer(help="Database utilities")
 config_app = typer.Typer(help="Configuration")
 app.add_typer(db_app, name="db")
