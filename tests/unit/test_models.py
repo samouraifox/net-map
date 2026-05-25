@@ -112,3 +112,84 @@ class TestFactConfig:
         with pytest.raises(ValidationError):
             MacFact(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5",
                     src="active.arp", surprise="not-allowed")  # type: ignore[call-arg]
+
+
+from datetime import datetime, timezone
+
+from netmap.models import (
+    Edge,
+    Event,
+    Host,
+    HostSnapshot,
+    Port,
+    Scan,
+    Subnet,
+)
+
+
+def _now() -> datetime:
+    return datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc)
+
+
+class TestDtos:
+    def test_host_round_trip(self) -> None:
+        h = Host(
+            id=1,
+            mac="aa:bb:cc:dd:ee:ff",
+            primary_ip="192.168.1.5",
+            hostname="nas.lan",
+            vendor="Synology",
+            os_family="Linux",
+            os_detail="Linux 4.x",
+            device_type="server",
+            trusted=False,
+            first_seen=_now(),
+            last_seen=_now(),
+            notes=None,
+        )
+        assert h.id == 1
+        assert h.trusted is False
+
+    def test_port_dto(self) -> None:
+        p = Port(
+            host_id=1, protocol="tcp", number=22, state="open",
+            service="ssh", version=None,
+            first_seen=_now(), last_seen=_now(),
+        )
+        assert p.number == 22
+
+    def test_edge_dto(self) -> None:
+        e = Edge(id=1, src_host_id=1, dst_host_id=2, kind="arp", weight=3, last_seen=_now())
+        assert e.weight == 3
+
+    def test_subnet_dto(self) -> None:
+        s = Subnet(
+            id=1, cidr="192.168.1.0/24", label="home",
+            source="config", enabled=True, hop_distance=0, first_seen=_now(),
+        )
+        assert s.enabled is True
+
+    def test_scan_dto(self) -> None:
+        s = Scan(
+            id=1, started_at=_now(), ended_at=None,
+            source="active.nmap", target="192.168.1.0/24",
+            mode="discover", status="running", hosts_seen=0, notes=None,
+        )
+        assert s.status == "running"
+
+    def test_host_snapshot(self) -> None:
+        snap = HostSnapshot(
+            id=1, scan_id=1, host_id=1, ip="192.168.1.5",
+            hostname="nas.lan", os_detail=None, device_type="server",
+            open_ports=[{"proto": "tcp", "port": 22, "svc": "ssh", "ver": None}],
+            captured_at=_now(),
+        )
+        assert snap.open_ports[0]["port"] == 22
+
+    def test_event_dto(self) -> None:
+        e = Event(
+            id=1, ts=_now(), scan_id=1, host_id=1,
+            kind="port.opened",
+            payload={"proto": "tcp", "port": 9000, "service": "http"},
+        )
+        assert e.kind == "port.opened"
