@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from netmap.models import Host, Subnet
+from netmap.models import Edge, Host, Port, Subnet
 from netmap.storage import Storage
 
 EXPECTED_TABLES = {
@@ -101,3 +101,63 @@ class TestHostUpsert:
         )
         assert with_mac.id == ip_only.id
         assert with_mac.mac == "aa:bb:cc:dd:ee:01"
+
+
+class TestPort:
+    def test_upsert_new_port(self, db: Storage) -> None:
+        host = db.upsert_host(_host("192.168.1.5"))
+        p = Port(
+            host_id=host.id, protocol="tcp", number=22, state="open",
+            service="ssh", version=None, first_seen=T0, last_seen=T0,
+        )
+        db.upsert_port(p)
+        ports = db.list_ports(host.id)
+        assert len(ports) == 1
+        assert ports[0].number == 22
+
+    def test_upsert_existing_updates_last_seen(self, db: Storage) -> None:
+        host = db.upsert_host(_host("192.168.1.5"))
+        p = Port(
+            host_id=host.id, protocol="tcp", number=22, state="open",
+            service="ssh", version=None, first_seen=T0, last_seen=T0,
+        )
+        db.upsert_port(p)
+        db.upsert_port(p.model_copy(update={"last_seen": T1}))
+        ports = db.list_ports(host.id)
+        assert len(ports) == 1
+        assert ports[0].last_seen == T1
+
+    def test_close_port(self, db: Storage) -> None:
+        host = db.upsert_host(_host("192.168.1.5"))
+        p = Port(
+            host_id=host.id, protocol="tcp", number=22, state="open",
+            service="ssh", version=None, first_seen=T0, last_seen=T0,
+        )
+        db.upsert_port(p)
+        db.close_port(host.id, "tcp", 22)
+        assert db.list_ports(host.id, only_open=True) == []
+
+
+class TestEdge:
+    def test_upsert_edge_creates(self, db: Storage) -> None:
+        a = db.upsert_host(_host("10.0.0.1", mac="aa:bb:cc:dd:ee:01"))
+        b = db.upsert_host(_host("10.0.0.2", mac="aa:bb:cc:dd:ee:02"))
+        e = Edge(
+            src_host_id=a.id, dst_host_id=b.id, kind="arp",
+            weight=1, last_seen=T0,
+        )
+        db.upsert_edge(e)
+        edges = db.list_edges()
+        assert len(edges) == 1
+
+    def test_upsert_edge_increments_weight(self, db: Storage) -> None:
+        a = db.upsert_host(_host("10.0.0.1", mac="aa:bb:cc:dd:ee:01"))
+        b = db.upsert_host(_host("10.0.0.2", mac="aa:bb:cc:dd:ee:02"))
+        e = Edge(
+            src_host_id=a.id, dst_host_id=b.id, kind="arp",
+            weight=1, last_seen=T0,
+        )
+        db.upsert_edge(e)
+        db.upsert_edge(e.model_copy(update={"last_seen": T1}))
+        edges = db.list_edges()
+        assert edges[0].weight == 2

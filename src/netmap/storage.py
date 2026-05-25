@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from netmap.models import Host, Subnet
+from netmap.models import Edge, Host, Port, Subnet
 
 
 def _iso(dt: datetime) -> str:
@@ -259,4 +259,66 @@ class Storage:
         ).fetchall()
         return [
             {"ip": r[0], "first_seen": r[1], "last_seen": r[2]} for r in rows
+        ]
+
+    # ---------- port ----------
+    def upsert_port(self, p: Port) -> None:
+        self._conn.execute(
+            "INSERT INTO port(host_id, protocol, number, state, service, version, "
+            "first_seen, last_seen) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(host_id, protocol, number) DO UPDATE SET "
+            "state=excluded.state, service=COALESCE(excluded.service, service), "
+            "version=COALESCE(excluded.version, version), last_seen=excluded.last_seen",
+            (
+                p.host_id, p.protocol, p.number, p.state, p.service, p.version,
+                _iso(p.first_seen), _iso(p.last_seen),
+            ),
+        )
+
+    def close_port(self, host_id: int, protocol: str, number: int) -> None:
+        self._conn.execute(
+            "UPDATE port SET state='closed' "
+            "WHERE host_id=? AND protocol=? AND number=?",
+            (host_id, protocol, number),
+        )
+
+    def list_ports(self, host_id: int, *, only_open: bool = False) -> list[Port]:
+        sql = (
+            "SELECT host_id, protocol, number, state, service, version, "
+            "first_seen, last_seen FROM port WHERE host_id=?"
+        )
+        if only_open:
+            sql += " AND state='open'"
+        rows = self._conn.execute(sql, (host_id,)).fetchall()
+        return [
+            Port(
+                host_id=r[0], protocol=r[1], number=r[2], state=r[3],
+                service=r[4], version=r[5],
+                first_seen=datetime.fromisoformat(r[6]),
+                last_seen=datetime.fromisoformat(r[7]),
+            )
+            for r in rows
+        ]
+
+    # ---------- edge ----------
+    def upsert_edge(self, e: Edge) -> None:
+        self._conn.execute(
+            "INSERT INTO edge(src_host_id, dst_host_id, kind, weight, last_seen) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(src_host_id, dst_host_id, kind) DO UPDATE SET "
+            "weight=weight+1, last_seen=excluded.last_seen",
+            (e.src_host_id, e.dst_host_id, e.kind, e.weight, _iso(e.last_seen)),
+        )
+
+    def list_edges(self) -> list[Edge]:
+        rows = self._conn.execute(
+            "SELECT id, src_host_id, dst_host_id, kind, weight, last_seen FROM edge"
+        ).fetchall()
+        return [
+            Edge(
+                id=r[0], src_host_id=r[1], dst_host_id=r[2], kind=r[3],
+                weight=r[4], last_seen=datetime.fromisoformat(r[5]),
+            )
+            for r in rows
         ]
