@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<nmaprun version="7.99" args="nmap -sn 192.168.1.0/24" start="1748080000">
+  <host>
+    <status state="up" reason="arp-response"/>
+    <address addr="192.168.1.5" addrtype="ipv4"/>
+    <address addr="3C:5A:B4:9D:11:E0" addrtype="mac" vendor="Synology Inc."/>
+    <hostnames>
+      <hostname name="nas.lan" type="PTR"/>
+    </hostnames>
+  </host>
+  <host>
+    <status state="up" reason="echo-reply"/>
+    <address addr="192.168.1.42" addrtype="ipv4"/>
+    <address addr="A4:5E:60:8B:C1:D2" addrtype="mac" vendor="Apple, Inc."/>
+  </host>
+</nmaprun>

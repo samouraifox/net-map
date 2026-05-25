@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<nmaprun version="7.99" args="nmap -sS -O --top-ports 100 192.168.1.5" start="1748080000">
+  <host>
+    <status state="up" reason="syn-ack"/>
+    <address addr="192.168.1.5" addrtype="ipv4"/>
+    <address addr="3C:5A:B4:9D:11:E0" addrtype="mac" vendor="Synology Inc."/>
+    <ports>
+      <port protocol="tcp" portid="22">
+        <state state="open"/>
+        <service name="ssh" product="OpenSSH" version="9.3"/>
+      </port>
+      <port protocol="tcp" portid="445">
+        <state state="open"/>
+        <service name="microsoft-ds" product="Samba" version="4.17"/>
+      </port>
+      <port protocol="tcp" portid="80">
+        <state state="closed"/>
+      </port>
+    </ports>
+    <os>
+      <osmatch name="Linux 4.x" accuracy="92">
+        <osclass type="general purpose" vendor="Linux" osfamily="Linux"/>
+      </osmatch>
+    </os>
+  </host>
+</nmaprun>
