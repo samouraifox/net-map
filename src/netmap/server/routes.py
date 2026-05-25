@@ -7,10 +7,13 @@ and the test app without DI plumbing.
 """
 from __future__ import annotations
 
+import asyncio as _asyncio
+import json as _json
 from datetime import datetime
 from ipaddress import IPv4Network
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
+from sse_starlette.sse import EventSourceResponse
 
 from netmap.models import Event, Scan, Subnet
 from netmap.scanner.loop import maybe_run
@@ -162,6 +165,29 @@ async def post_scan(request: Request, req: ScanRequest):
         )
 
     return ScanResponse(scan_id=scan_id, accepted_targets=[str(n) for n in nets])
+
+
+@api.get("/stream")
+async def stream(request: Request):
+    bus = _state(request).bus
+    queue = bus.subscribe()
+
+    async def event_iter():
+        try:
+            yield {"comment": "connected"}
+            while True:
+                if await request.is_disconnected():
+                    return
+                try:
+                    event = await _asyncio.wait_for(queue.get(), timeout=30)
+                except TimeoutError:
+                    yield {"comment": "ping"}
+                    continue
+                yield {"data": _json.dumps(event.model_dump(mode="json"))}
+        finally:
+            bus.unsubscribe(queue)
+
+    return EventSourceResponse(event_iter(), ping=30)
 
 
 def register(app: FastAPI) -> None:
