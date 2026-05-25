@@ -6,8 +6,8 @@ This makes the entire correlation surface unit-testable with hand-built fact
 lists — see ``tests/unit/test_correlation.py``.
 
 T11: host upsert + ``host.new`` event emission.
-T12 will add ``port.opened`` / ``port.closed`` (this file will grow).
-T13 will add ``ip.changed`` + per-scan ``HostSnapshot`` insertion.
+T12: ``port.opened`` / ``port.closed`` events.
+T13: ``ip.changed`` event + per-scan ``HostSnapshot`` insertion.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from netmap.models import (
     Host,
     HostKey,
     HostnameFact,
+    HostSnapshot,
     MacFact,
     OsFact,
     PortFact,
@@ -50,18 +51,38 @@ def correlate(
         by_key.setdefault(key, []).append(f)
 
     for key, host_facts in by_key.items():
-        existing_id = _find_existing_host_id(db, key)
+        existing = _find_existing_host(db, key)
         host_dto = _build_host_dto(key, host_facts, now)
         updated = db.upsert_host(host_dto)
+        # `upsert_host` returns the canonical re-read row; id is non-None.
+        assert updated.id is not None
 
-        if existing_id is None:
+        if existing is None:
             events.append(Event(
                 ts=now, scan_id=scan_id, host_id=updated.id, kind="host.new",
                 payload={"ip": updated.primary_ip, "mac": updated.mac},
             ))
+        elif existing.primary_ip != updated.primary_ip:
+            events.append(Event(
+                ts=now, scan_id=scan_id, host_id=updated.id, kind="ip.changed",
+                payload={"old": existing.primary_ip, "new": updated.primary_ip},
+            ))
 
         events.extend(_apply_ports(
             db, updated, host_facts, scan_id, now, observed_subnets,
+        ))
+
+        # Snapshot the host's post-update state (after _apply_ports has run).
+        open_ports = [
+            {"proto": p.protocol, "port": p.number,
+             "svc": p.service, "ver": p.version}
+            for p in db.list_ports(updated.id, only_open=True)
+        ]
+        db.insert_snapshot(HostSnapshot(
+            scan_id=scan_id, host_id=updated.id, ip=updated.primary_ip,
+            hostname=updated.hostname, os_detail=updated.os_detail,
+            device_type=updated.device_type, open_ports=open_ports,
+            captured_at=now,
         ))
 
     for ev in events:
@@ -78,15 +99,12 @@ def _key_for(f: Fact) -> HostKey | None:
     return None
 
 
-def _find_existing_host_id(db: Storage, key: HostKey) -> int | None:
+def _find_existing_host(db: Storage, key: HostKey) -> Host | None:
     if key.mac:
-        row = db._conn.execute("SELECT id FROM host WHERE mac=?", (key.mac,)).fetchone()
-        if row:
-            return int(row[0])
-    row = db._conn.execute(
-        "SELECT id FROM host WHERE mac IS NULL AND primary_ip=?", (key.ip,)
-    ).fetchone()
-    return int(row[0]) if row else None
+        h = db._find_host_by_mac(key.mac)
+        if h:
+            return h
+    return db._find_host_by_ip(key.ip)
 
 
 def _build_host_dto(key: HostKey, facts: list[Fact], now: datetime) -> Host:

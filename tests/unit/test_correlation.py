@@ -104,3 +104,29 @@ class TestPortEvents:
         )
         kinds = [e.kind for e in events]
         assert "port.closed" in kinds
+
+
+class TestIpChange:
+    def test_dhcp_ip_change_emits_event(self, db: Storage, scan_id: int) -> None:
+        correlate(
+            [MacFact(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5", src="active.arp")],
+            db, scan_id, now=T0,
+        )
+        sid2 = db.start_scan(Scan(started_at=T0, source="active.nmap", status="running"))
+        events = correlate(
+            [MacFact(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.99", src="active.arp")],
+            db, sid2, now=T0,
+        )
+        assert "ip.changed" in [e.kind for e in events]
+
+
+class TestSnapshot:
+    def test_snapshot_written_per_host(self, db: Storage, scan_id: int) -> None:
+        correlate(
+            [MacFact(mac="aa:bb:cc:dd:ee:ff", ip="192.168.1.5", src="active.arp")],
+            db, scan_id, now=T0,
+        )
+        host_id = db._conn.execute("SELECT id FROM host").fetchone()[0]
+        snap = db.latest_snapshot(host_id)
+        assert snap is not None
+        assert snap.ip == "192.168.1.5"
