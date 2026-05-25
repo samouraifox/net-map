@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -124,7 +124,7 @@ class TestFactConfig:
 
 
 def _now() -> datetime:
-    return datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc)
+    return datetime(2026, 5, 25, 12, 0, tzinfo=UTC)
 
 
 class TestDtos:
