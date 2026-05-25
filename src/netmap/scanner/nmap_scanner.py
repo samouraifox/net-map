@@ -99,18 +99,23 @@ def _compose_version(svc_el) -> str | None:
     return " ".join(parts) if parts else None
 
 
-def _flags_for_mode(mode: ScanMode) -> list[str]:
+def _flags_for_mode(
+    mode: ScanMode,
+    *,
+    default_host_timeout: str = "5m",
+    deep_host_timeout: str = "30m",
+) -> list[str]:
     if mode == ScanMode.DISCOVER:
         return ["-sn", "-PR", "-PE", "-PA80,443", "-T4"]
     if mode == ScanMode.DEFAULT:
         return [
             "-sS", "-O", "--top-ports", "100", "-T4",
-            "--host-timeout", "5m", "--max-retries", "2",
+            "--host-timeout", default_host_timeout, "--max-retries", "2",
         ]
     if mode == ScanMode.DEEP:
         return [
             "-sS", "-sV", "-O", "-p-", "-T3",
-            "--host-timeout", "30m", "--max-retries", "2",
+            "--host-timeout", deep_host_timeout, "--max-retries", "2",
         ]
     raise ValueError(f"unknown ScanMode: {mode!r}")
 
@@ -120,13 +125,25 @@ class NmapScanner:
 
     name: ClassVar[str] = "active.nmap"
 
-    def __init__(self, binary: str | None = None) -> None:
+    def __init__(
+        self,
+        binary: str | None = None,
+        *,
+        default_host_timeout: str = "5m",
+        deep_host_timeout: str = "30m",
+    ) -> None:
         self._binary = binary or shutil.which("nmap") or "nmap"
+        self._default_host_timeout = default_host_timeout
+        self._deep_host_timeout = deep_host_timeout
 
     async def scan(
         self, target: IPv4Network, mode: ScanMode
     ) -> AsyncIterator[Fact]:
-        flags = _flags_for_mode(mode)
+        flags = _flags_for_mode(
+            mode,
+            default_host_timeout=self._default_host_timeout,
+            deep_host_timeout=self._deep_host_timeout,
+        )
         args = [self._binary, "-oX", "-", *flags, str(target)]
         proc = await asyncio.create_subprocess_exec(
             *args,

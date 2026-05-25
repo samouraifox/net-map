@@ -28,8 +28,11 @@ app = typer.Typer(
 DEFAULT_DB_PATH = Path("~/.netmap/state.db").expanduser()
 
 
-def _make_nmap_scanner() -> NmapScanner:
-    return NmapScanner()
+def _make_nmap_scanner(cfg) -> NmapScanner:
+    return NmapScanner(
+        default_host_timeout=cfg.scan.default_scan_host_timeout,
+        deep_host_timeout=cfg.scan.deep_scan_host_timeout,
+    )
 
 
 def _make_arp_scanner(iface: str | None) -> ArpScanner:
@@ -93,7 +96,7 @@ def scan(
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     db = Storage(str(db_path))
-    nmap = _make_nmap_scanner()
+    nmap = _make_nmap_scanner(cfg)
     arp = _make_arp_scanner(iface)
 
     asyncio.run(_run_scan(db, [nmap, arp], nets, mode))

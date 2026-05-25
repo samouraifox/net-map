@@ -71,7 +71,7 @@ class TestScanCommand:
             scan = staticmethod(fake_arp_scan)
 
         from netmap import cli as cli_mod
-        monkeypatch.setattr(cli_mod, "_make_nmap_scanner", lambda: FakeNmap())
+        monkeypatch.setattr(cli_mod, "_make_nmap_scanner", lambda cfg: FakeNmap())
         monkeypatch.setattr(cli_mod, "_make_arp_scanner", lambda iface: FakeArp())
 
         db_path = tmp_path / "test.db"
