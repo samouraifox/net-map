@@ -118,7 +118,11 @@ CREATE INDEX IF NOT EXISTS idx_event_ts ON event(ts);
 
 class Storage:
     def __init__(self, path: str | Path = ":memory:") -> None:
-        self._conn = sqlite3.connect(str(path), isolation_level=None)
+        # check_same_thread=False because M2's scan loop uses asyncio.to_thread.
+        # Callers are expected to serialize writes (the scan loop and CLI both do).
+        self._conn = sqlite3.connect(
+            str(path), isolation_level=None, check_same_thread=False
+        )
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._init_schema()
