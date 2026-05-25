@@ -59,7 +59,8 @@ def create_app(
     app.state.db = db
     app.state.bus = bus
     app.state.in_flight = in_flight
-    # Routes registered in Tasks 15-19 will be added below this comment.
+    from netmap.server import routes
+    routes.register(app)
     return app
 
 
